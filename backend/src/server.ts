@@ -7,6 +7,9 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.routes";
 import dashboardRoutes from "./routes/dashboard.routes";
 
+import path from "path";
+import courseRoutes from "./routes/course.routes";
+
 dotenv.config();
 
 const app = express();
@@ -21,6 +24,9 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 
+const uploadsPath = path.resolve(process.cwd(), "uploads");
+app.use("/uploads", express.static(uploadsPath));
+
 app.get("/api/health", (req: Request, res: Response) => {
   res.json({
     status: "ok",
@@ -29,7 +35,9 @@ app.get("/api/health", (req: Request, res: Response) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api", courseRoutes);
 app.use("/api", dashboardRoutes);
+
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({
