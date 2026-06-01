@@ -302,6 +302,36 @@ export async function getCurrentCompetition(
       });
     }
 
+    // Make sure the current user is a participant of the active competition so
+    // their own trading shows up on the leaderboard. Created once, on demand.
+    try {
+      const userId = getCurrentUserId(req);
+      const myPortfolio: any = await Portfolio.findOne({ user: userId }).lean();
+
+      if (myPortfolio) {
+        await (CompetitionParticipant as any).updateOne(
+          { competition: competition._id, user: userId },
+          {
+            $setOnInsert: {
+              competition: competition._id,
+              user: userId,
+              portfolio: myPortfolio._id,
+              startingEquity: toNumber(myPortfolio.startingCash, 100000),
+              currentEquity: toNumber(myPortfolio.totalEquity, 100000),
+              roi: toNumber(myPortfolio.roi, 0),
+              joinedAt: new Date(),
+            },
+          },
+          { upsert: true }
+        );
+      }
+    } catch (enrollError) {
+      console.warn(
+        "Leaderboard auto-enroll skipped:",
+        (enrollError as Error).message
+      );
+    }
+
     const participantFilter: any = {
       $or: [
         { competition: competition._id },
@@ -309,10 +339,12 @@ export async function getCurrentCompetition(
       ],
     };
 
+    // Pull every participant (capped for safety) and rank them by their *live*
+    // portfolio ROI below, so trading on the dashboard is reflected immediately
+    // instead of using the stale stored value on the participant record.
     const participants: any[] = await (CompetitionParticipant as any)
       .find(participantFilter)
-      .sort({ roi: -1, returnRate: -1, totalValue: -1 })
-      .limit(10)
+      .limit(500)
       .lean();
 
     const userIds = Array.from(
@@ -346,26 +378,43 @@ export async function getCurrentCompetition(
       ])
     );
 
+    // Live portfolios keyed by user id — the source of truth for ROI/equity.
+    const portfolios: any[] = await (Portfolio as any)
+      .find({ user: { $in: userIds } })
+      .lean();
+
+    const portfolioByUser = new Map(
+      portfolios.map((portfolio: any) => [String(portfolio.user), portfolio])
+    );
+
     const leaderboard = participants
       .map((participant: any) => {
-        const initialValue = toNumber(participant.initialValue, 100000);
-        const totalValue = toNumber(
-          participant.totalValue ??
-            participant.currentValue ??
-            participant.portfolioValue,
-          initialValue
-        );
-
-        const roi =
-          participant.roi !== undefined
-            ? toNumber(participant.roi, 0)
-            : participant.returnRate !== undefined
-              ? toNumber(participant.returnRate, 0)
-              : initialValue > 0
-                ? ((totalValue - initialValue) / initialValue) * 100
-                : 0;
-
         const userId = String(participant.user ?? participant.userId ?? "");
+        const portfolio = portfolioByUser.get(userId);
+
+        // Prefer the live portfolio figures; fall back to the participant's
+        // stored values only when no portfolio is found.
+        const storedInitial = toNumber(participant.startingEquity, 100000);
+        const initialValue = portfolio
+          ? toNumber(portfolio.startingCash, storedInitial)
+          : storedInitial;
+
+        const totalValue = portfolio
+          ? toNumber(portfolio.totalEquity, initialValue)
+          : toNumber(
+              participant.currentEquity ??
+                participant.totalValue ??
+                participant.currentValue,
+              initialValue
+            );
+
+        const roi = portfolio
+          ? toNumber(portfolio.roi, 0)
+          : participant.roi !== undefined
+            ? toNumber(participant.roi, 0)
+            : initialValue > 0
+              ? ((totalValue - initialValue) / initialValue) * 100
+              : 0;
 
         return {
           id: String(participant._id),
@@ -375,6 +424,7 @@ export async function getCurrentCompetition(
         };
       })
       .sort((a, b) => b.roi - a.roi)
+      .slice(0, 10)
       .map((participant, index) => ({
         rank: index + 1,
         ...participant,

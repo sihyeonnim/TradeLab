@@ -1,0 +1,41 @@
+# TradeLab backend + MongoDB for the Synology NAS.
+#
+# Deploy:
+#   1. Copy this repo to the NAS (e.g. /volume1/docker/TradeLab).
+#   2. Create backend/.env from backend/.env.example (JWT_SECRET, FINNHUB_API_KEY, etc.).
+#      MONGODB_URI / CLIENT_URL / NODE_ENV below override anything in that file.
+#   3. From this folder:  docker compose up -d --build
+#   4. Seed once:         docker compose exec backend npm run seed
+#
+# The backend listens on the NAS at port 5000; the frontend on your dev machine
+# reaches it through the Vite proxy (set VITE_API_PROXY_TARGET=http://<nas-ip>:5000).
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Not exposed to the LAN — only the backend talks to it over the compose network.
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Reach Mongo by its service name on the internal compose network.
+      MONGODB_URI: mongodb://mongo:27017/tradelab
+      # Keep development cookies (sameSite=lax, not secure) so auth works over
+      # plain HTTP through the Vite proxy. Switch to production only with HTTPS.
+      NODE_ENV: development
+      # CORS origin — the Vite dev server your browser actually talks to.
+      CLIENT_URL: http://localhost:5173
+      PORT: "5000"
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongo
+
+volumes:
+  mongo-data:

@@ -19,6 +19,7 @@ export interface ICourse extends Document {
   description: string;
   instructor: Types.ObjectId;
   level: CourseLevel;
+  price: number;
   tags: string[];
   approvalStatus: CourseApprovalStatus;
   approvedBy?: Types.ObjectId;
@@ -55,6 +56,13 @@ const courseSchema = new Schema<ICourse>(
       type: String,
       enum: Object.values(CourseLevel),
       default: CourseLevel.BEGINNER,
+    },
+
+    // Course price in virtual USD. 0 = free.
+    price: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
 
     tags: [
