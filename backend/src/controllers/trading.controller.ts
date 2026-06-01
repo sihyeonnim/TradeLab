@@ -10,7 +10,11 @@ import {
   OrderStatus,
   Asset,
   ActivityLog,
+  PortfolioSnapshot,
 } from "../models";
+
+import { isFinnhubConfigured } from "../services/finnhub.service";
+import { refreshAssetPrice } from "../services/marketData.service";
 
 function getCurrentUserId(req: Request): string {
   return String((req as any).user._id);
@@ -128,8 +132,28 @@ async function updatePortfolioSummary(portfolio: any) {
     totalEquity,
     initialCash: startingCash,
     startingCash,
+    realizedPnl: roundMoney(toNumber(portfolio.realizedPnl, 0)),
     roi,
   };
+}
+
+/**
+ * Record a point-in-time snapshot of the portfolio's value so the portfolio
+ * page can render a performance time-series chart (REQ-PORT-07/08).
+ */
+async function recordPortfolioSnapshot(portfolio: any, summary: any) {
+  try {
+    await PortfolioSnapshot.create({
+      portfolio: portfolio._id,
+      user: portfolio.user,
+      cashBalance: summary.cashBalance,
+      holdingsValue: summary.holdingsValue,
+      totalEquity: summary.totalEquity,
+      roi: summary.roi,
+    });
+  } catch (error) {
+    console.warn("Portfolio snapshot skipped:", (error as Error).message);
+  }
 }
 
 async function safeCreateActivityLog({
@@ -205,6 +229,21 @@ export async function createMarketOrder(
       return res.status(404).json({
         message: "Asset not found or inactive.",
       });
+    }
+
+    // Execute against the freshest available market price. If Finnhub is
+    // configured we pull a live quote right before filling the order; on any
+    // failure (rate limit, network, market closed) we fall back to the last
+    // stored price so trading still works.
+    if (isFinnhubConfigured()) {
+      try {
+        await refreshAssetPrice(asset, { save: true });
+      } catch (error) {
+        console.warn(
+          `Live price refresh failed for ${asset.symbol}, using stored price:`,
+          (error as Error).message
+        );
+      }
     }
 
     const executionPrice = roundMoney(toNumber(asset.lastFetchedPrice, 0));
@@ -297,6 +336,16 @@ export async function createMarketOrder(
         toNumber(portfolio.cashBalance, 0) + grossAmount
       );
 
+      // Realized P/L is locked in at sell time using the average buy price of
+      // the position being closed (REQ-PORT-03).
+      const averageBuyPrice = toNumber(holding.averageBuyPrice, 0);
+      const realizedGain = roundMoney(
+        quantity * (executionPrice - averageBuyPrice)
+      );
+      portfolio.realizedPnl = roundMoney(
+        toNumber(portfolio.realizedPnl, 0) + realizedGain
+      );
+
       const remainingQuantity = roundMoney(toNumber(holding.quantity, 0) - quantity);
 
       if (remainingQuantity <= 0) {
@@ -322,6 +371,7 @@ export async function createMarketOrder(
     });
 
     const summary = await updatePortfolioSummary(portfolio);
+    await recordPortfolioSnapshot(portfolio, summary);
 
     await safeCreateActivityLog({
       userId,

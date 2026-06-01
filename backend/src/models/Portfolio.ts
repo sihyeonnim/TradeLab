@@ -7,6 +7,7 @@ export interface IPortfolio extends Document {
   startingCash: number;
   totalAssetValue: number;
   totalEquity: number;
+  realizedPnl: number;
   roi: number;
   createdAt: Date;
   updatedAt: Date;
@@ -44,6 +45,13 @@ const portfolioSchema = new Schema<IPortfolio>(
       type: Number,
       default: 100000,
       min: 0,
+    },
+
+    // Accumulated realized profit/loss from closed (sold) positions.
+    // Updated at sell time using the holding's average buy price.
+    realizedPnl: {
+      type: Number,
+      default: 0,
     },
 
     // Leaderboard ranking is based only on ROI.
