@@ -5,64 +5,87 @@ export interface ICompetitionParticipant extends Document {
   competition: Types.ObjectId;
   user: Types.ObjectId;
   portfolio: Types.ObjectId;
+
   startingEquity: number;
   currentEquity: number;
+
+  startingPortfolioValue: number;
+  currentPortfolioValue: number;
+  profit: number;
+
   roi: number;
   rank?: number;
   joinedAt: Date;
+
   createdAt: Date;
   updatedAt: Date;
 }
 
-const competitionParticipantSchema = new Schema<ICompetitionParticipant>(
-  {
-    competition: {
-      type: Schema.Types.ObjectId,
-      ref: "Competition",
-      required: true,
-      index: true,
-    },
-    user: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
-    portfolio: {
-      type: Schema.Types.ObjectId,
-      ref: "Portfolio",
-      required: true,
-    },
-    startingEquity: {
-      type: Number,
-      default: 100000,
-      min: 0,
-    },
-    currentEquity: {
-      type: Number,
-      default: 100000,
-      min: 0,
-    },
+const competitionParticipantSchema =
+  new Schema<ICompetitionParticipant>(
+    {
+      competition: {
+        type: Schema.Types.ObjectId,
+        ref: "Competition",
+        required: true,
+        index: true,
+      },
+      user: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        required: true,
+        index: true,
+      },
+      portfolio: {
+        type: Schema.Types.ObjectId,
+        ref: "Portfolio",
+        required: true,
+      },
 
-    // Rule: Leaderboard ranking is based only on ROI.
-    roi: {
-      type: Number,
-      default: 0,
-      index: true,
-    },
+      startingEquity: {
+        type: Number,
+        default: 100000,
+        min: 0,
+      },
+      currentEquity: {
+        type: Number,
+        default: 100000,
+        min: 0,
+      },
 
-    rank: {
-      type: Number,
-      min: 1,
-    },
+      startingPortfolioValue: {
+        type: Number,
+        default: 100000,
+        min: 0,
+      },
+      currentPortfolioValue: {
+        type: Number,
+        default: 100000,
+        min: 0,
+      },
+      profit: {
+        type: Number,
+        default: 0,
+      },
 
-    joinedAt: {
-      type: Date,
-      default: Date.now,
+      roi: {
+        type: Number,
+        default: 0,
+        index: true,
+      },
+
+      rank: {
+        type: Number,
+        min: 1,
+      },
+
+      joinedAt: {
+        type: Date,
+        default: Date.now,
+      },
     },
-  },
-  { timestamps: true }
-);
+    { timestamps: true }
+  );
 
 competitionParticipantSchema.index(
   { competition: 1, user: 1 },

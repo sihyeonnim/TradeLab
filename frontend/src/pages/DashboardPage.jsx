@@ -1,18 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+
 import { api } from "../api";
+import BottomNav from "../components/BottomNav.jsx";
+
+const allocationColors = [
+  "#38bdf8",
+  "#22c55e",
+  "#f59e0b",
+  "#a78bfa",
+  "#fb7185",
+  "#2dd4bf",
+  "#f97316",
+  "#84cc16",
+  "#60a5fa",
+  "#e879f9",
+];
 
 function formatCurrency(value) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 2,
   }).format(Number(value || 0));
 }
 
 function formatPercent(value) {
   const numberValue = Number(value || 0);
-  return `${numberValue >= 0 ? "+" : ""}${numberValue.toFixed(2)}%`;
+  const sign = numberValue > 0 ? "+" : "";
+  return `${sign}${numberValue.toFixed(2)}%`;
 }
 
 function formatDate(value) {
@@ -20,11 +35,247 @@ function formatDate(value) {
     return "-";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
+  return new Date(value).toLocaleDateString("en-US", {
     year: "numeric",
     month: "short",
-    day: "2-digit",
-  }).format(new Date(value));
+    day: "numeric",
+  });
+}
+
+function toNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function getPortfolioSummary(portfolio) {
+  if (!portfolio) {
+    return {
+      cashBalance: 0,
+      totalAssetValue: 0,
+      totalEquity: 0,
+      roi: 0,
+      startingCash: 100000,
+      holdings: [],
+    };
+  }
+
+  return {
+    cashBalance: toNumber(portfolio.cashBalance, 0),
+    totalAssetValue: toNumber(
+      portfolio.totalAssetValue ?? portfolio.summary?.holdingsValue,
+      0
+    ),
+    totalEquity: toNumber(
+      portfolio.totalEquity ?? portfolio.summary?.totalValue ?? portfolio.cashBalance,
+      0
+    ),
+    roi: toNumber(portfolio.roi ?? portfolio.summary?.roi, 0),
+    startingCash: toNumber(
+      portfolio.startingCash ??
+        portfolio.initialCash ??
+        portfolio.initialBalance ??
+        portfolio.startingBalance,
+      100000
+    ),
+    holdings: portfolio.holdings || [],
+  };
+}
+
+function getAssetId(asset) {
+  if (!asset) {
+    return "";
+  }
+
+  if (typeof asset === "string") {
+    return asset;
+  }
+
+  return String(asset.id || asset._id || "");
+}
+
+function getAssetPrice(asset) {
+  if (!asset || typeof asset === "string") {
+    return 0;
+  }
+
+  return toNumber(asset.lastPrice ?? asset.lastFetchedPrice, 0);
+}
+
+function getHoldingAsset(holding) {
+  if (!holding) {
+    return null;
+  }
+
+  return holding.asset || holding.assetInfo || null;
+}
+
+function resolveHoldingAsset(holding, assets) {
+  const rawAsset = getHoldingAsset(holding);
+
+  if (!rawAsset) {
+    return null;
+  }
+
+  if (typeof rawAsset === "object") {
+    const rawAssetId = getAssetId(rawAsset);
+    const latestAsset = assets.find(
+      (asset) => String(getAssetId(asset)) === String(rawAssetId)
+    );
+
+    return latestAsset || rawAsset;
+  }
+
+  return (
+    assets.find((asset) => String(getAssetId(asset)) === String(rawAsset)) || null
+  );
+}
+
+function getHoldingQuantity(holding) {
+  if (!holding) {
+    return 0;
+  }
+
+  return toNumber(holding.quantity, 0);
+}
+
+function getHoldingAveragePrice(holding) {
+  if (!holding) {
+    return 0;
+  }
+
+  return toNumber(
+    holding.averagePrice ?? holding.averageBuyPrice ?? holding.avgPrice,
+    0
+  );
+}
+
+function getHoldingMarketValue(holding, assets) {
+  const asset = resolveHoldingAsset(holding, assets);
+  const quantity = getHoldingQuantity(holding);
+  const price = getAssetPrice(asset);
+
+  if (price > 0) {
+    return quantity * price;
+  }
+
+  return toNumber(holding?.marketValue, 0);
+}
+
+function getHoldingReturnPercent(holding, assets) {
+  const asset = resolveHoldingAsset(holding, assets);
+  const currentPrice = getAssetPrice(asset);
+  const averagePrice = getHoldingAveragePrice(holding);
+
+  if (averagePrice <= 0) {
+    return 0;
+  }
+
+  return ((currentPrice - averagePrice) / averagePrice) * 100;
+}
+
+function getCourseTitle(enrollment) {
+  if (!enrollment) {
+    return "Course";
+  }
+
+  if (enrollment.course && typeof enrollment.course === "object") {
+    return enrollment.course.title || "Course";
+  }
+
+  return "Course";
+}
+
+function getCompetitionTitle(item) {
+  if (!item) {
+    return "Competition";
+  }
+
+  if (item.competition && typeof item.competition === "object") {
+    return item.competition.title || item.competition.name || "Competition";
+  }
+
+  return "Competition";
+}
+
+function getCompetitionStatus(item) {
+  if (!item) {
+    return "-";
+  }
+
+  if (item.competition && typeof item.competition === "object") {
+    return item.competition.status || "-";
+  }
+
+  return "-";
+}
+
+function getCompetitionRoi(item) {
+  return toNumber(item?.participation?.roi ?? item?.roi, 0);
+}
+
+function getCompetitionRank(item) {
+  return item?.participation?.rank ?? item?.rank ?? null;
+}
+
+function buildAllocationData(portfolioSummary, holdingsValue, assets) {
+  const rows = [];
+
+  if (portfolioSummary.cashBalance > 0) {
+    rows.push({
+      label: "Cash",
+      value: portfolioSummary.cashBalance,
+    });
+  }
+
+  const assetMap = new Map();
+
+  portfolioSummary.holdings.forEach((holding) => {
+    const asset = resolveHoldingAsset(holding, assets);
+    const symbol = asset?.symbol || "Unknown Asset";
+    const value = getHoldingMarketValue(holding, assets);
+
+    if (value <= 0) {
+      return;
+    }
+
+    assetMap.set(symbol, (assetMap.get(symbol) || 0) + value);
+  });
+
+  assetMap.forEach((value, label) => {
+    rows.push({ label, value });
+  });
+
+  if (rows.length === 1 && rows[0].label === "Cash" && holdingsValue > 0) {
+    rows.push({
+      label: "Assets",
+      value: holdingsValue,
+    });
+  }
+
+  return rows
+    .filter((row) => row.value > 0)
+    .map((row, index) => ({
+      ...row,
+      color: allocationColors[index % allocationColors.length],
+    }));
+}
+
+function buildConicGradient(allocationData) {
+  const total = allocationData.reduce((sum, item) => sum + item.value, 0);
+
+  if (total <= 0 || allocationData.length === 0) {
+    return "conic-gradient(#334155 0 100%)";
+  }
+
+  let current = 0;
+  const stops = allocationData.map((item) => {
+    const start = current;
+    const percent = (item.value / total) * 100;
+    current += percent;
+    return `${item.color} ${start.toFixed(2)}% ${current.toFixed(2)}%`;
+  });
+
+  return `conic-gradient(${stops.join(", ")})`;
 }
 
 export default function DashboardPage() {
@@ -32,26 +283,12 @@ export default function DashboardPage() {
 
   const [data, setData] = useState({
     user: null,
-    assets: [],
     portfolio: null,
-    summary: null,
-    holdings: [],
+    assets: [],
     orders: [],
-    courses: [],
-    competition: null,
-    leaderboard: [],
-  });
-
-  const [orderForm, setOrderForm] = useState({
-    assetId: "",
-    side: "BUY",
-    quantity: "1",
-  });
-
-  const [orderStatus, setOrderStatus] = useState({
-    loading: false,
-    message: "",
-    error: "",
+    enrollments: [],
+    joinedCompetitions: [],
+    currentCompetition: null,
   });
 
   const [status, setStatus] = useState({
@@ -59,420 +296,373 @@ export default function DashboardPage() {
     error: "",
   });
 
-  async function loadDashboard() {
-    const [
-      meResponse,
-      assetsResponse,
-      portfolioResponse,
-      ordersResponse,
-      coursesResponse,
-      competitionResponse,
-    ] = await Promise.all([
-      api.get("/auth/me"),
-      api.get("/assets"),
-      api.get("/portfolio/me"),
-      api.get("/orders/me"),
-      api.get("/courses"),
-      api.get("/competitions/current"),
-    ]);
+  async function loadDashboard({ silent = false } = {}) {
+    try {
+      const [
+        meResponse,
+        portfolioResponse,
+        assetsResponse,
+        ordersResponse,
+        enrollmentsResponse,
+        joinedCompetitionsResponse,
+        currentCompetitionResponse,
+      ] = await Promise.all([
+        api.get("/auth/me"),
+        api.get("/portfolio/me"),
+        api.get("/market/assets").catch(() => api.get("/assets")),
+        api.get("/orders/me"),
+        api.get("/enrollments/me").catch(() => ({ data: { enrollments: [] } })),
+        api.get("/competitions/me").catch(() => ({ data: { competitions: [] } })),
+        api
+          .get("/competitions/current")
+          .catch(() => ({ data: { competition: null } })),
+      ]);
 
-    const assets = assetsResponse.data.assets || [];
+      const rawPortfolio =
+        portfolioResponse.data.portfolio || portfolioResponse.data || null;
+      const portfolio = rawPortfolio
+        ? {
+            ...rawPortfolio,
+            holdings: rawPortfolio.holdings || portfolioResponse.data.holdings || [],
+          }
+        : null;
 
-    setData({
-      user: meResponse.data.user,
-      assets,
-      portfolio: portfolioResponse.data.portfolio,
-      summary: portfolioResponse.data.summary,
-      holdings: portfolioResponse.data.holdings || [],
-      orders: ordersResponse.data.orders || [],
-      courses: coursesResponse.data.courses || [],
-      competition: competitionResponse.data.competition,
-      leaderboard: competitionResponse.data.leaderboard || [],
-    });
+      setData({
+        user: meResponse.data.user,
+        portfolio,
+        assets: assetsResponse.data.assets || [],
+        orders: ordersResponse.data.orders || [],
+        enrollments: enrollmentsResponse.data.enrollments || [],
+        joinedCompetitions: joinedCompetitionsResponse.data.competitions || [],
+        currentCompetition: currentCompetitionResponse.data.competition || null,
+      });
 
-    setOrderForm((prev) => ({
-      ...prev,
-      assetId: prev.assetId || assets[0]?.id || "",
-    }));
+      setStatus({ loading: false, error: "" });
+    } catch (error) {
+      if (error.response?.status === 401) {
+        navigate("/login");
+        return;
+      }
 
-    setStatus({
-      loading: false,
-      error: "",
-    });
-  }
-
-  useEffect(() => {
-    async function initDashboard() {
-      try {
-        await loadDashboard();
-      } catch (error) {
-        if (error.response?.status === 401) {
-          navigate("/login");
-          return;
-        }
-
+      if (!silent) {
         setStatus({
           loading: false,
           error:
-            error.response?.data?.message ||
-            "Failed to load dashboard data.",
+            error.response?.data?.message || "Failed to load dashboard data.",
         });
       }
     }
+  }
 
-    initDashboard();
+  useEffect(() => {
+    loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navigate]);
 
-  const selectedAsset = useMemo(() => {
-    return data.assets.find((asset) => asset.id === orderForm.assetId) || null;
-  }, [data.assets, orderForm.assetId]);
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      loadDashboard({ silent: true });
+    }, 1000);
 
-  const estimatedAmount = useMemo(() => {
-    return (
-      Number(orderForm.quantity || 0) * Number(selectedAsset?.lastPrice || 0)
+    return () => {
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const portfolioSummary = getPortfolioSummary(data.portfolio);
+
+  const liveHoldingsValue = useMemo(() => {
+    return portfolioSummary.holdings.reduce(
+      (sum, holding) => sum + getHoldingMarketValue(holding, data.assets),
+      0
     );
-  }, [orderForm.quantity, selectedAsset]);
+  }, [portfolioSummary.holdings, data.assets]);
 
-  function updateOrderField(event) {
-    setOrderForm((prev) => ({
-      ...prev,
-      [event.target.name]: event.target.value,
-    }));
-  }
+  const liveTotalEquity = portfolioSummary.cashBalance + liveHoldingsValue;
 
-  async function handleSubmitOrder(event) {
-    event.preventDefault();
-
-    setOrderStatus({
-      loading: true,
-      message: "",
-      error: "",
-    });
-
-    try {
-      const response = await api.post("/orders/market", {
-        assetId: orderForm.assetId,
-        side: orderForm.side,
-        quantity: Number(orderForm.quantity),
-      });
-
-      setOrderStatus({
-        loading: false,
-        message: response.data.message,
-        error: "",
-      });
-
-      await loadDashboard();
-    } catch (error) {
-      setOrderStatus({
-        loading: false,
-        message: "",
-        error: error.response?.data?.message || "Failed to submit order.",
-      });
+  const liveRoi = useMemo(() => {
+    if (portfolioSummary.startingCash <= 0) {
+      return portfolioSummary.roi;
     }
-  }
 
-  async function handleLogout() {
-    await api.post("/auth/logout");
-    navigate("/login");
-  }
+    return (
+      ((liveTotalEquity - portfolioSummary.startingCash) /
+        portfolioSummary.startingCash) *
+      100
+    );
+  }, [liveTotalEquity, portfolioSummary.startingCash, portfolioSummary.roi]);
+
+  const allocationData = useMemo(() => {
+    return buildAllocationData(portfolioSummary, liveHoldingsValue, data.assets);
+  }, [portfolioSummary, liveHoldingsValue, data.assets]);
+
+  const allocationTotal = allocationData.reduce(
+    (sum, item) => sum + item.value,
+    0
+  );
+
+  const allocationGradient = buildConicGradient(allocationData);
+
+  const winCount = useMemo(() => {
+    return data.joinedCompetitions.filter((item) => {
+      const rank = getCompetitionRank(item);
+      const status = getCompetitionStatus(item);
+      return Number(rank) === 1 && status === "ENDED";
+    }).length;
+  }, [data.joinedCompetitions]);
 
   if (status.loading) {
     return (
-      <main className="dashboard-shell">
+      <main className="dashboard-shell with-bottom-nav">
         <p>Loading dashboard...</p>
       </main>
     );
   }
 
-  if (status.error) {
-    return (
-      <main className="dashboard-shell">
-        <div className="dashboard-card">
-          <p className="error">{status.error}</p>
-          <button className="secondary-button" onClick={() => navigate("/login")}>
-            Back to login
-          </button>
-        </div>
-      </main>
-    );
-  }
-
-  const {
-    user,
-    summary,
-    holdings,
-    orders,
-    courses,
-    competition,
-    leaderboard,
-    assets,
-  } = data;
-
   return (
-    <main className="dashboard-shell">
+    <main className="dashboard-shell with-bottom-nav">
       <nav className="dashboard-nav">
         <div>
           <span className="brand-badge">TradeLab</span>
           <h1>Dashboard</h1>
           <p className="dashboard-subtitle">
-            Welcome back, {user?.displayName || "Trader"}.
+            Overview of your portfolio, courses, and competitions.
           </p>
         </div>
 
-        <button className="secondary-button" onClick={handleLogout}>
-          Logout
-        </button>
+        <div className="nav-actions">
+          {(data.user?.role === "INSTRUCTOR" || data.user?.role === "ADMIN") && (
+            <Link className="nav-button" to="/instructor/courses">
+              Instructor
+            </Link>
+          )}
+
+          {data.user?.role === "ADMIN" && (
+            <Link className="nav-button" to="/admin/courses">
+              Admin
+            </Link>
+          )}
+
+          <div className="user-pill">
+            {data.user?.displayName || data.user?.name || "User"}
+          </div>
+        </div>
       </nav>
 
+      {status.error && <p className="error">{status.error}</p>}
+
+      <section className="stats-grid">
+        <article className="stat-card">
+          <span>Cash Balance</span>
+          <strong>{formatCurrency(portfolioSummary.cashBalance)}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Asset Value</span>
+          <strong>{formatCurrency(liveHoldingsValue)}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>Total Equity</span>
+          <strong>{formatCurrency(liveTotalEquity)}</strong>
+        </article>
+
+        <article className="stat-card">
+          <span>ROI</span>
+          <strong>{formatPercent(liveRoi)}</strong>
+        </article>
+      </section>
+
       <section className="dashboard-grid">
-        <article className="dashboard-card wide">
-          <p className="eyebrow">Current user</p>
-          <div className="user-row">
-            <div>
-              <h2>{user?.displayName}</h2>
-              <p>{user?.email}</p>
+        <article className="dashboard-card">
+          <p className="eyebrow">Allocation</p>
+          <h3>Cash and asset allocation</h3>
+
+          <div
+            className="allocation-donut"
+            style={{
+              background: allocationGradient,
+            }}
+          >
+            <div className="allocation-donut-inner">
+              <strong>{formatCurrency(allocationTotal)}</strong>
+              <span>Total</span>
             </div>
-            <div className="role-pill">{user?.role}</div>
+          </div>
+
+          <div className="allocation-legend allocation-legend-list">
+            {allocationData.length === 0 ? (
+              <span>No allocation data.</span>
+            ) : (
+              allocationData.map((item) => {
+                const percent = allocationTotal
+                  ? (item.value / allocationTotal) * 100
+                  : 0;
+
+                return (
+                  <span key={item.label}>
+                    <i
+                      className="legend-dot"
+                      style={{ backgroundColor: item.color }}
+                    />{" "}
+                    {item.label} {percent.toFixed(1)}% ·{" "}
+                    {formatCurrency(item.value)}
+                  </span>
+                );
+              })
+            )}
           </div>
         </article>
 
         <article className="dashboard-card">
-          <p className="eyebrow">Cash balance</p>
-          <h3>{formatCurrency(summary?.cashBalance)}</h3>
-          <p>Available virtual cash for market orders.</p>
-        </article>
+          <p className="eyebrow">Holdings</p>
+          <h3>Holdings Summary</h3>
 
-        <article className="dashboard-card">
-          <p className="eyebrow">Portfolio value</p>
-          <h3>{formatCurrency(summary?.totalValue)}</h3>
-          <p>Cash plus current market value of holdings.</p>
-        </article>
-
-        <article className="dashboard-card">
-          <p className="eyebrow">ROI</p>
-          <h3 className={Number(summary?.roi || 0) >= 0 ? "positive" : "negative"}>
-            {formatPercent(summary?.roi)}
-          </h3>
-          <p>Ranking metric for competitions.</p>
-        </article>
-
-        <article className="dashboard-card wide">
-          <div className="section-title-row">
-            <div>
-              <p className="eyebrow">Market order</p>
-              <h3>Place an instant trade</h3>
-            </div>
-          </div>
-
-          <form className="trade-form" onSubmit={handleSubmitOrder}>
-            <label>
-              Asset
-              <select
-                name="assetId"
-                value={orderForm.assetId}
-                onChange={updateOrderField}
-                required
-              >
-                {assets.map((asset) => (
-                  <option key={asset.id} value={asset.id}>
-                    {asset.symbol} - {asset.name} ({formatCurrency(asset.lastPrice)})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Side
-              <select
-                name="side"
-                value={orderForm.side}
-                onChange={updateOrderField}
-              >
-                <option value="BUY">BUY</option>
-                <option value="SELL">SELL</option>
-              </select>
-            </label>
-
-            <label>
-              Quantity
-              <input
-                name="quantity"
-                type="number"
-                min="0.000001"
-                step="0.000001"
-                value={orderForm.quantity}
-                onChange={updateOrderField}
-                required
-              />
-            </label>
-
-            <div className="estimate-box">
-              <span>
-                Estimated {orderForm.side === "BUY" ? "cost" : "proceeds"}
-              </span>
-              <strong>{formatCurrency(estimatedAmount)}</strong>
-            </div>
-
-            <button disabled={orderStatus.loading || assets.length === 0}>
-              {orderStatus.loading ? "Submitting..." : "Submit market order"}
-            </button>
-          </form>
-
-          {orderStatus.message && <p className="success">{orderStatus.message}</p>}
-          {orderStatus.error && <p className="error">{orderStatus.error}</p>}
-        </article>
-
-        <article className="dashboard-card wide">
-          <div className="section-title-row">
-            <div>
-              <p className="eyebrow">Holdings</p>
-              <h3>Current positions</h3>
-            </div>
-          </div>
-
-          {holdings.length === 0 ? (
+          {portfolioSummary.holdings.length === 0 ? (
             <p>No holdings yet.</p>
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Asset</th>
-                    <th>Quantity</th>
-                    <th>Avg. Price</th>
-                    <th>Last Price</th>
-                    <th>Market Value</th>
-                    <th>Unrealized P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {holdings.map((holding) => (
-                    <tr key={holding.id}>
-                      <td>
-                        <strong>{holding.asset?.symbol || "-"}</strong>
-                        <span>{holding.asset?.name || "Unknown asset"}</span>
-                      </td>
-                      <td>{holding.quantity}</td>
-                      <td>{formatCurrency(holding.averagePrice)}</td>
-                      <td>{formatCurrency(holding.lastPrice)}</td>
-                      <td>{formatCurrency(holding.marketValue)}</td>
-                      <td
-                        className={
-                          Number(holding.unrealizedPnl || 0) >= 0
-                            ? "positive"
-                            : "negative"
-                        }
-                      >
-                        {formatCurrency(holding.unrealizedPnl)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="compact-list">
+              {portfolioSummary.holdings.slice(0, 5).map((holding) => {
+                const asset = resolveHoldingAsset(holding, data.assets);
+                const quantity = getHoldingQuantity(holding);
+                const price = getAssetPrice(asset);
+                const marketValue = getHoldingMarketValue(holding, data.assets);
+                const returnPercent = getHoldingReturnPercent(holding, data.assets);
+
+                return (
+                  <div className="compact-row" key={holding.id || getAssetId(asset)}>
+                    <div>
+                      <strong>{asset?.symbol || "-"}</strong>
+                      <span>
+                        {quantity} × {formatCurrency(price)} ·{" "}
+                        {formatPercent(returnPercent)}
+                      </span>
+                    </div>
+                    <em>{formatCurrency(marketValue)}</em>
+                  </div>
+                );
+              })}
             </div>
           )}
-        </article>
 
-        <article className="dashboard-card wide">
-          <p className="eyebrow">Recent orders</p>
-          <h3>Latest trading activity</h3>
-
-          {orders.length === 0 ? (
-            <p>No orders yet.</p>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Asset</th>
-                    <th>Side</th>
-                    <th>Type</th>
-                    <th>Quantity</th>
-                    <th>Price</th>
-                    <th>Status</th>
-                    <th>Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orders.map((order) => (
-                    <tr key={order.id}>
-                      <td>
-                        <strong>{order.asset?.symbol || "-"}</strong>
-                        <span>{order.asset?.name || "Unknown asset"}</span>
-                      </td>
-                      <td>{order.side}</td>
-                      <td>{order.orderType}</td>
-                      <td>{order.quantity}</td>
-                      <td>{formatCurrency(order.price)}</td>
-                      <td>{order.status}</td>
-                      <td>{formatDate(order.executedAt || order.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <Link className="secondary-button link-button" to="/market">
+            Go to Market
+          </Link>
         </article>
 
         <article className="dashboard-card">
           <p className="eyebrow">Courses</p>
-          <h3>Available lessons</h3>
+          <h3>My Courses</h3>
 
-          <div className="stack-list">
-            {courses.length === 0 ? (
-              <p>No approved courses yet.</p>
-            ) : (
-              courses.slice(0, 4).map((course) => (
-                <div className="mini-item" key={course.id}>
-                  <strong>{course.title}</strong>
-                  <span>
-                    {course.instructor?.name
-                      ? `By ${course.instructor.name}`
-                      : "Instructor pending"}
-                  </span>
+          {data.enrollments.length === 0 ? (
+            <p>No enrolled courses yet.</p>
+          ) : (
+            <div className="compact-list">
+              {data.enrollments.slice(0, 4).map((enrollment) => (
+                <div className="compact-row" key={enrollment.id}>
+                  <div>
+                    <strong>{getCourseTitle(enrollment)}</strong>
+                    <span>{enrollment.status}</span>
+                  </div>
+                  <em>{Number(enrollment.progressPercent || 0)}%</em>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
+
+          <Link className="secondary-button link-button" to="/courses">
+            Browse Courses
+          </Link>
         </article>
 
         <article className="dashboard-card">
           <p className="eyebrow">Competition</p>
-          <h3>{competition?.title || competition?.name || "No competition"}</h3>
+          <h3>My Competitions</h3>
 
-          {competition ? (
-            <>
-              <p>{competition.description || "Seasonal ROI competition."}</p>
-              <div className="date-range">
-                {formatDate(competition.startDate)} -{" "}
-                {formatDate(competition.endDate)}
-              </div>
-            </>
+          {data.joinedCompetitions.length === 0 ? (
+            <p>No joined competitions yet.</p>
           ) : (
-            <p>No active competition found.</p>
+            <div className="compact-list">
+              {data.joinedCompetitions.slice(0, 4).map((item) => (
+                <div
+                  className="compact-row"
+                  key={item.participation?.id || item.competition?.id}
+                >
+                  <div>
+                    <strong>{getCompetitionTitle(item)}</strong>
+                    <span>
+                      {getCompetitionStatus(item)}
+                      {getCompetitionRank(item)
+                        ? ` · Rank #${getCompetitionRank(item)}`
+                        : ""}
+                    </span>
+                  </div>
+                  <em>{formatPercent(getCompetitionRoi(item))}</em>
+                </div>
+              ))}
+            </div>
           )}
+
+          <div className="placeholder-metric">
+            <span>Competition wins</span>
+            <strong>{winCount}</strong>
+          </div>
+
+          {data.currentCompetition && (
+            <p className="muted-text">
+              Current: {data.currentCompetition.title || data.currentCompetition.name}
+            </p>
+          )}
+
+          <Link className="secondary-button link-button" to="/competition">
+            Go to Competition
+          </Link>
         </article>
 
-        <article className="dashboard-card">
-          <p className="eyebrow">Leaderboard</p>
-          <h3>Top ROI</h3>
+        <article className="dashboard-card wide">
+          <p className="eyebrow">Recent Orders</p>
+          <h3>Order Summary</h3>
 
-          <div className="stack-list">
-            {leaderboard.length === 0 ? (
-              <p>No participants yet.</p>
-            ) : (
-              leaderboard.slice(0, 5).map((entry) => (
-                <div className="leader-row" key={entry.id}>
-                  <span>#{entry.rank}</span>
-                  <strong>{entry.user?.name || "Trader"}</strong>
-                  <em>{formatPercent(entry.roi)}</em>
-                </div>
-              ))
-            )}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Side</th>
+                  <th>Quantity</th>
+                  <th>Price</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {data.orders.length === 0 ? (
+                  <tr>
+                    <td colSpan="5">No orders yet.</td>
+                  </tr>
+                ) : (
+                  data.orders.slice(0, 5).map((order) => (
+                    <tr key={order.id}>
+                      <td>{order.asset?.symbol || "-"}</td>
+                      <td>{order.side}</td>
+                      <td>{order.quantity}</td>
+                      <td>
+                        {formatCurrency(
+                          order.executedPrice || order.price || order.requestedPrice
+                        )}
+                      </td>
+                      <td>{order.status}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </article>
       </section>
+
+      <BottomNav user={data.user} />
     </main>
   );
 }

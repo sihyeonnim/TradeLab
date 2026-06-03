@@ -17,6 +17,7 @@ import {
   rejectCourse,
   enrollInCourse,
   listMyEnrollments,
+  listInstructorCourseEnrollments,
 } from "../controllers/course.controller";
 
 import { requireAuth, requireRole } from "../middleware/auth.middleware";
@@ -42,6 +43,14 @@ router.get(
   requireAuth,
   requireRole("INSTRUCTOR", "ADMIN"),
   listInstructorCourses
+);
+
+
+router.get(
+  "/instructor/courses/:courseId/enrollments",
+  requireAuth,
+  requireRole("INSTRUCTOR"),
+  listInstructorCourseEnrollments
 );
 
 router.patch(

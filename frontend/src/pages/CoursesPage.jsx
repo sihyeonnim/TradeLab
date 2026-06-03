@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
+import BottomNav from "../components/BottomNav.jsx";
 
 export default function CoursesPage() {
   const navigate = useNavigate();
 
+  const [user, setUser] = useState(null);
   const [courses, setCourses] = useState([]);
   const [enrollments, setEnrollments] = useState([]);
   const [status, setStatus] = useState({
@@ -14,11 +16,13 @@ export default function CoursesPage() {
   });
 
   async function loadData() {
-    const [coursesResponse, enrollmentsResponse] = await Promise.all([
+    const [meResponse, coursesResponse, enrollmentsResponse] = await Promise.all([
+      api.get("/auth/me"),
       api.get("/courses"),
-      api.get("/enrollments/me"),
+      api.get("/enrollments/me").catch(() => ({ data: { enrollments: [] } })),
     ]);
 
+    setUser(meResponse.data.user);
     setCourses(coursesResponse.data.courses || []);
     setEnrollments(enrollmentsResponse.data.enrollments || []);
   }
@@ -45,8 +49,22 @@ export default function CoursesPage() {
     init();
   }, [navigate]);
 
+  function getEnrollmentCourseId(enrollment) {
+    if (!enrollment?.course) {
+      return null;
+    }
+
+    if (typeof enrollment.course === "string") {
+      return enrollment.course;
+    }
+
+    return enrollment.course.id || enrollment.course._id || null;
+  }
+
   function isEnrolled(courseId) {
-    return enrollments.some((enrollment) => enrollment.course?.id === courseId);
+    return enrollments.some(
+      (enrollment) => String(getEnrollmentCourseId(enrollment)) === String(courseId)
+    );
   }
 
   async function enroll(courseId) {
@@ -72,14 +90,14 @@ export default function CoursesPage() {
 
   if (status.loading) {
     return (
-      <main className="dashboard-shell">
+      <main className="dashboard-shell with-bottom-nav">
         <p>Loading courses...</p>
       </main>
     );
   }
 
   return (
-    <main className="dashboard-shell">
+    <main className="dashboard-shell with-bottom-nav">
       <nav className="dashboard-nav">
         <div>
           <span className="brand-badge">TradeLab</span>
@@ -89,9 +107,9 @@ export default function CoursesPage() {
           </p>
         </div>
 
-        <Link className="nav-button" to="/dashboard">
-          Dashboard
-        </Link>
+        <div className="user-pill">
+          {user?.displayName || user?.name || "User"}
+        </div>
       </nav>
 
       {status.message && <p className="success">{status.message}</p>}
@@ -126,17 +144,23 @@ export default function CoursesPage() {
                   View Details
                 </Link>
 
-                <button
-                  onClick={() => enroll(course.id)}
-                  disabled={isEnrolled(course.id)}
-                >
-                  {isEnrolled(course.id) ? "Enrolled" : "Enroll"}
-                </button>
+                {user?.role === "USER" ? (
+                  <button
+                    onClick={() => enroll(course.id)}
+                    disabled={isEnrolled(course.id)}
+                  >
+                    {isEnrolled(course.id) ? "Enrolled" : "Enroll"}
+                  </button>
+                ) : (
+                  <button disabled>Users only</button>
+                )}
               </div>
             </article>
           ))
         )}
       </section>
+
+      <BottomNav user={user} />
     </main>
   );
 }

@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { buildVideoSrc, canPlayLocalVideo } from "../video";
+import BottomNav from "../components/BottomNav.jsx";
 
 export default function CourseDetailPage() {
   const { courseId } = useParams();
   const navigate = useNavigate();
 
+  const [user, setUser] = useState(null);
   const [course, setCourse] = useState(null);
   const [lessons, setLessons] = useState([]);
   const [status, setStatus] = useState({
@@ -16,11 +18,13 @@ export default function CourseDetailPage() {
   });
 
   async function loadData() {
-    const [courseResponse, lessonsResponse] = await Promise.all([
+    const [meResponse, courseResponse, lessonsResponse] = await Promise.all([
+      api.get("/auth/me"),
       api.get(`/courses/${courseId}`),
       api.get(`/courses/${courseId}/lessons`),
     ]);
 
+    setUser(meResponse.data.user);
     setCourse(courseResponse.data.course);
     setLessons(lessonsResponse.data.lessons || []);
   }
@@ -62,7 +66,7 @@ export default function CourseDetailPage() {
 
   if (status.loading) {
     return (
-      <main className="dashboard-shell">
+      <main className="dashboard-shell with-bottom-nav">
         <p>Loading course...</p>
       </main>
     );
@@ -70,15 +74,18 @@ export default function CourseDetailPage() {
 
   if (status.error && !course) {
     return (
-      <main className="dashboard-shell">
+      <main className="dashboard-shell with-bottom-nav">
         <p className="error">{status.error}</p>
-        <Link to="/courses">Back to courses</Link>
+        <Link className="secondary-button link-button" to="/courses">
+          Back to courses
+        </Link>
+        <BottomNav user={user} />
       </main>
     );
   }
 
   return (
-    <main className="dashboard-shell">
+    <main className="dashboard-shell with-bottom-nav">
       <nav className="dashboard-nav">
         <div>
           <span className="brand-badge">TradeLab</span>
@@ -86,9 +93,9 @@ export default function CourseDetailPage() {
           <p className="dashboard-subtitle">{course?.description}</p>
         </div>
 
-        <Link className="nav-button" to="/courses">
-          Courses
-        </Link>
+        <div className="user-pill">
+          {user?.displayName || user?.name || "User"}
+        </div>
       </nav>
 
       {status.message && <p className="success">{status.message}</p>}
@@ -104,7 +111,25 @@ export default function CourseDetailPage() {
           </p>
           <p className="muted-text">Level: {course?.level || "-"}</p>
 
-          <button onClick={enroll}>Enroll in this course</button>
+          <div className="tag-row">
+            {(course?.tags || []).map((tag) => (
+              <span className="tag" key={tag}>
+                {tag}
+              </span>
+            ))}
+          </div>
+
+          <div className="action-row">
+            <Link className="secondary-button link-button" to="/courses">
+              Back to Courses
+            </Link>
+
+            {user?.role === "USER" ? (
+              <button onClick={enroll}>Enroll in this course</button>
+            ) : (
+              <button disabled>Users only</button>
+            )}
+          </div>
         </article>
 
         <article className="dashboard-card wide">
@@ -143,6 +168,8 @@ export default function CourseDetailPage() {
           </div>
         </article>
       </section>
+
+      <BottomNav user={user} />
     </main>
   );
 }

@@ -986,6 +986,52 @@ export async function enrollInCourse(
   }
 }
 
+
+export async function listInstructorCourseEnrollments(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const courseId = getParam(req, "courseId");
+
+    if (!mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({
+        message: "Valid courseId is required.",
+      });
+    }
+
+    const course: any = await CourseModel.findById(courseId)
+      .populate("instructor", "name email role");
+
+    if (!course) {
+      return res.status(404).json({
+        message: "Course not found.",
+      });
+    }
+
+    if (!canManageCourse(req, course)) {
+      return res.status(403).json({
+        message: "You do not have permission to view enrollments for this course.",
+      });
+    }
+
+    const enrollments: any[] = await EnrollmentModel.find({
+      course: courseId,
+    })
+      .populate("user", "name displayName email role isEmailVerified createdAt")
+      .sort({ enrolledAt: -1 })
+      .lean();
+
+    return res.json({
+      course: normalizeCourse(course),
+      enrollments: enrollments.map(normalizeEnrollment),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function listMyEnrollments(
   req: Request,
   res: Response,

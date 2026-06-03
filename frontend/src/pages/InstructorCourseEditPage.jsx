@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { buildVideoSrc, canPlayLocalVideo } from "../video";
+import BottomNav from "../components/BottomNav.jsx";
 
 export default function InstructorCourseEditPage() {
   const { courseId } = useParams();
   const navigate = useNavigate();
 
+  const [user, setUser] = useState(null);
   const [course, setCourse] = useState(null);
   const [lessons, setLessons] = useState([]);
 
@@ -33,13 +35,26 @@ export default function InstructorCourseEditPage() {
   });
 
   async function loadData() {
-    const [courseResponse, lessonsResponse] = await Promise.all([
+    const [meResponse, courseResponse, lessonsResponse] = await Promise.all([
+      api.get("/auth/me"),
       api.get(`/courses/${courseId}`),
       api.get(`/courses/${courseId}/lessons`),
     ]);
 
+    const currentUser = meResponse.data.user;
     const loadedCourse = courseResponse.data.course;
 
+    if (!["INSTRUCTOR", "ADMIN"].includes(currentUser.role)) {
+      setUser(currentUser);
+      setStatus({
+        loading: false,
+        error: "You are not authorized to edit instructor courses.",
+        message: "",
+      });
+      return;
+    }
+
+    setUser(currentUser);
     setCourse(loadedCourse);
     setLessons(lessonsResponse.data.lessons || []);
 
@@ -179,14 +194,14 @@ export default function InstructorCourseEditPage() {
 
   if (status.loading) {
     return (
-      <main className="dashboard-shell">
+      <main className="dashboard-shell with-bottom-nav">
         <p>Loading course editor...</p>
       </main>
     );
   }
 
   return (
-    <main className="dashboard-shell">
+    <main className="dashboard-shell with-bottom-nav">
       <nav className="dashboard-nav">
         <div>
           <span className="brand-badge">TradeLab</span>
@@ -194,174 +209,178 @@ export default function InstructorCourseEditPage() {
           <p className="dashboard-subtitle">{course?.title}</p>
         </div>
 
-        <Link className="nav-button" to="/instructor/courses">
-          Instructor Courses
-        </Link>
+        <div className="user-pill">
+          {user?.displayName || user?.name || "User"}
+        </div>
       </nav>
 
       {status.message && <p className="success">{status.message}</p>}
       {status.error && <p className="error">{status.error}</p>}
 
-      <section className="dashboard-grid">
-        <article className="dashboard-card wide">
-          <p className="eyebrow">Course</p>
-          <h3>Basic information</h3>
+      {!status.error && (
+        <section className="dashboard-grid">
+          <article className="dashboard-card wide">
+            <p className="eyebrow">Course</p>
+            <h3>Basic information</h3>
 
-          <form className="course-form" onSubmit={saveCourse}>
-            <label>
-              Title
-              <input
-                name="title"
-                value={courseForm.title}
-                onChange={updateCourseField}
-              />
-            </label>
+            <form className="course-form" onSubmit={saveCourse}>
+              <label>
+                Title
+                <input
+                  name="title"
+                  value={courseForm.title}
+                  onChange={updateCourseField}
+                />
+              </label>
 
-            <label>
-              Description
-              <textarea
-                name="description"
-                value={courseForm.description}
-                onChange={updateCourseField}
-              />
-            </label>
+              <label>
+                Description
+                <textarea
+                  name="description"
+                  value={courseForm.description}
+                  onChange={updateCourseField}
+                />
+              </label>
 
-            <label>
-              Level
-              <select
-                name="level"
-                value={courseForm.level}
-                onChange={updateCourseField}
-              >
-                <option value="BEGINNER">BEGINNER</option>
-                <option value="INTERMEDIATE">INTERMEDIATE</option>
-                <option value="ADVANCED">ADVANCED</option>
-              </select>
-            </label>
+              <label>
+                Level
+                <select
+                  name="level"
+                  value={courseForm.level}
+                  onChange={updateCourseField}
+                >
+                  <option value="BEGINNER">BEGINNER</option>
+                  <option value="INTERMEDIATE">INTERMEDIATE</option>
+                  <option value="ADVANCED">ADVANCED</option>
+                </select>
+              </label>
 
-            <label>
-              Tags
-              <input
-                name="tags"
-                value={courseForm.tags}
-                onChange={updateCourseField}
-              />
-            </label>
+              <label>
+                Tags
+                <input
+                  name="tags"
+                  value={courseForm.tags}
+                  onChange={updateCourseField}
+                />
+              </label>
 
-            <button>Save course</button>
-          </form>
-        </article>
+              <button>Save course</button>
+            </form>
+          </article>
 
-        <article className="dashboard-card wide">
-          <p className="eyebrow">Lessons</p>
-          <h3>Add lesson</h3>
+          <article className="dashboard-card wide">
+            <p className="eyebrow">Lessons</p>
+            <h3>Add lesson</h3>
 
-          <form className="course-form" onSubmit={createLesson}>
-            <label>
-              Title
-              <input
-                name="title"
-                value={lessonForm.title}
-                onChange={updateLessonField}
-                required
-              />
-            </label>
+            <form className="course-form" onSubmit={createLesson}>
+              <label>
+                Title
+                <input
+                  name="title"
+                  value={lessonForm.title}
+                  onChange={updateLessonField}
+                  required
+                />
+              </label>
 
-            <label>
-              Summary
-              <input
-                name="summary"
-                value={lessonForm.summary}
-                onChange={updateLessonField}
-              />
-            </label>
+              <label>
+                Summary
+                <input
+                  name="summary"
+                  value={lessonForm.summary}
+                  onChange={updateLessonField}
+                />
+              </label>
 
-            <label>
-              Content
-              <textarea
-                name="contentMarkdown"
-                value={lessonForm.contentMarkdown}
-                onChange={updateLessonField}
-              />
-            </label>
+              <label>
+                Content
+                <textarea
+                  name="contentMarkdown"
+                  value={lessonForm.contentMarkdown}
+                  onChange={updateLessonField}
+                />
+              </label>
 
-            <label>
-              Order
-              <input
-                name="order"
-                type="number"
-                min="1"
-                value={lessonForm.order}
-                onChange={updateLessonField}
-              />
-            </label>
+              <label>
+                Order
+                <input
+                  name="order"
+                  type="number"
+                  min="1"
+                  value={lessonForm.order}
+                  onChange={updateLessonField}
+                />
+              </label>
 
-            <label>
-              Duration minutes
-              <input
-                name="durationMinutes"
-                type="number"
-                min="0"
-                value={lessonForm.durationMinutes}
-                onChange={updateLessonField}
-              />
-            </label>
+              <label>
+                Duration minutes
+                <input
+                  name="durationMinutes"
+                  type="number"
+                  min="0"
+                  value={lessonForm.durationMinutes}
+                  onChange={updateLessonField}
+                />
+              </label>
 
-            <label>
-              Video file
-              <input
-                name="video"
-                type="file"
-                accept="video/mp4,video/webm,video/quicktime"
-                onChange={updateLessonField}
-              />
-            </label>
+              <label>
+                Video file
+                <input
+                  name="video"
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime"
+                  onChange={updateLessonField}
+                />
+              </label>
 
-            <button>Create lesson</button>
-          </form>
-        </article>
+              <button>Create lesson</button>
+            </form>
+          </article>
 
-        <article className="dashboard-card wide">
-          <p className="eyebrow">Existing lessons</p>
-          <h3>Lessons in this course</h3>
+          <article className="dashboard-card wide">
+            <p className="eyebrow">Existing lessons</p>
+            <h3>Lessons in this course</h3>
 
-          <div className="lesson-list">
-            {lessons.length === 0 ? (
-              <p>No lessons yet.</p>
-            ) : (
-              lessons.map((lesson) => {
-                const videoSrc = canPlayLocalVideo(lesson)
-                  ? buildVideoSrc(lesson.video.path)
-                  : null;
+            <div className="lesson-list">
+              {lessons.length === 0 ? (
+                <p>No lessons yet.</p>
+              ) : (
+                lessons.map((lesson) => {
+                  const videoSrc = canPlayLocalVideo(lesson)
+                    ? buildVideoSrc(lesson.video.path)
+                    : null;
 
-                return (
-                  <div className="lesson-card" key={lesson.id}>
-                    <div>
-                      <p className="eyebrow">Lesson {lesson.order}</p>
-                      <h3>{lesson.title}</h3>
-                      <p>{lesson.summary}</p>
-                      <p className="muted-text">{lesson.contentMarkdown}</p>
+                  return (
+                    <div className="lesson-card" key={lesson.id}>
+                      <div>
+                        <p className="eyebrow">Lesson {lesson.order}</p>
+                        <h3>{lesson.title}</h3>
+                        <p>{lesson.summary}</p>
+                        <p className="muted-text">{lesson.contentMarkdown}</p>
+                      </div>
+
+                      {videoSrc ? (
+                        <video className="lesson-video" controls src={videoSrc} />
+                      ) : (
+                        <div className="video-placeholder">No uploaded video.</div>
+                      )}
+
+                      <button
+                        className="danger-button"
+                        onClick={() => deleteLesson(lesson.id)}
+                      >
+                        Delete lesson
+                      </button>
                     </div>
+                  );
+                })
+              )}
+            </div>
+          </article>
+        </section>
+      )}
 
-                    {videoSrc ? (
-                      <video className="lesson-video" controls src={videoSrc} />
-                    ) : (
-                      <div className="video-placeholder">No uploaded video.</div>
-                    )}
-
-                    <button
-                      className="danger-button"
-                      onClick={() => deleteLesson(lesson.id)}
-                    >
-                      Delete lesson
-                    </button>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </article>
-      </section>
+      <BottomNav user={user} />
     </main>
   );
 }

@@ -21,7 +21,7 @@ function toNumber(value: unknown, fallback = 0): number {
 }
 
 function getAssetPrice(asset: any): number {
-  return toNumber(asset?.lastFetchedPrice, 0);
+  return toNumber(asset?.lastFetchedPrice ?? asset?.lastPrice, 0);
 }
 
 function normalizeAsset(asset: any) {
@@ -131,6 +131,7 @@ export async function getMyPortfolio(
         totalAssetValue: holdingsValue,
         totalEquity: totalValue,
         roi,
+        holdings: normalizedHoldings,
       },
       summary: {
         cashBalance,
