@@ -30,16 +30,46 @@ function formatPercent(value) {
   return `${sign}${numberValue.toFixed(2)}%`;
 }
 
-function formatDate(value) {
+function formatDateTime(value) {
   if (!value) {
     return "-";
   }
 
-  return new Date(value).toLocaleDateString("en-US", {
+  return new Date(value).toLocaleString("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+}
+
+function formatDate(value) {
+  return formatDateTime(value);
+}
+
+function formatParticipantPercent(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatPercent(entry?.roi || 0);
+}
+
+function formatParticipantProfit(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatCurrency(entry?.profit || 0);
+}
+
+function formatParticipantRank(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "-";
+  }
+
+  return entry?.rank || "-";
 }
 
 function toNumber(value, fallback = 0) {
@@ -209,12 +239,36 @@ function getCompetitionStatus(item) {
   return "-";
 }
 
+function isCompetitionPending(item) {
+  return (
+    item?.participation?.scorePending ||
+    item?.participation?.competitionStatus === "UPCOMING" ||
+    getCompetitionStatus(item) === "UPCOMING"
+  );
+}
+
 function getCompetitionRoi(item) {
+  if (isCompetitionPending(item)) {
+    return null;
+  }
+
   return toNumber(item?.participation?.roi ?? item?.roi, 0);
 }
 
 function getCompetitionRank(item) {
+  if (isCompetitionPending(item)) {
+    return null;
+  }
+
   return item?.participation?.rank ?? item?.rank ?? null;
+}
+
+function formatCompetitionRoi(item) {
+  if (isCompetitionPending(item)) {
+    return "Pending";
+  }
+
+  return formatPercent(getCompetitionRoi(item));
 }
 
 function buildAllocationData(portfolioSummary, holdingsValue, assets) {
@@ -404,13 +458,24 @@ export default function DashboardPage() {
 
   const allocationGradient = buildConicGradient(allocationData);
 
-  const winCount = useMemo(() => {
-    return data.joinedCompetitions.filter((item) => {
-      const rank = getCompetitionRank(item);
-      const status = getCompetitionStatus(item);
-      return Number(rank) === 1 && status === "ENDED";
-    }).length;
+  const activeJoinedCompetitions = useMemo(() => {
+    return data.joinedCompetitions.filter(
+      (item) => getCompetitionStatus(item) !== "ENDED"
+    );
   }, [data.joinedCompetitions]);
+
+  const completedJoinedCompetitions = useMemo(() => {
+    return data.joinedCompetitions.filter(
+      (item) => getCompetitionStatus(item) === "ENDED"
+    );
+  }, [data.joinedCompetitions]);
+
+  const winCount = useMemo(() => {
+    return completedJoinedCompetitions.filter((item) => {
+      const rank = getCompetitionRank(item);
+      return Number(rank) === 1;
+    }).length;
+  }, [completedJoinedCompetitions]);
 
   if (status.loading) {
     return (
@@ -580,11 +645,11 @@ export default function DashboardPage() {
           <p className="eyebrow">Competition</p>
           <h3>My Competitions</h3>
 
-          {data.joinedCompetitions.length === 0 ? (
-            <p>No joined competitions yet.</p>
+          {activeJoinedCompetitions.length === 0 ? (
+            <p>No active or upcoming joined competitions.</p>
           ) : (
             <div className="compact-list">
-              {data.joinedCompetitions.slice(0, 4).map((item) => (
+              {activeJoinedCompetitions.slice(0, 4).map((item) => (
                 <div
                   className="compact-row"
                   key={item.participation?.id || item.competition?.id}
@@ -598,7 +663,7 @@ export default function DashboardPage() {
                         : ""}
                     </span>
                   </div>
-                  <em>{formatPercent(getCompetitionRoi(item))}</em>
+                  <em>{formatCompetitionRoi(item)}</em>
                 </div>
               ))}
             </div>
@@ -617,6 +682,41 @@ export default function DashboardPage() {
 
           <Link className="secondary-button link-button" to="/competition">
             Go to Competition
+          </Link>
+        </article>
+
+        <article className="dashboard-card">
+          <p className="eyebrow">History</p>
+          <h3>Past Competitions</h3>
+
+          {completedJoinedCompetitions.length === 0 ? (
+            <p>No completed competitions yet.</p>
+          ) : (
+            <div className="compact-list">
+              {completedJoinedCompetitions.slice(0, 5).map((item) => (
+                <div
+                  className="compact-row"
+                  key={item.participation?.id || item.competition?.id}
+                >
+                  <div>
+                    <strong>{getCompetitionTitle(item)}</strong>
+                    <span>
+                      ENDED
+                      {getCompetitionRank(item)
+                        ? ` · Final rank #${getCompetitionRank(item)}`
+                        : ""}
+                    </span>
+                  </div>
+                  <em className={Number(getCompetitionRoi(item)) >= 0 ? "positive" : "negative"}>
+                    {formatCompetitionRoi(item)}
+                  </em>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <Link className="secondary-button link-button" to="/competition">
+            View Competition History
           </Link>
         </article>
 

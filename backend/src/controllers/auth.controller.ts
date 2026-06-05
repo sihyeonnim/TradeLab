@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 
-import { User, UserRole, EmailVerificationToken } from "../models";
+import { User, UserRole, EmailVerificationToken, Portfolio } from "../models";
 import { createRawToken, hashToken } from "../utils/crypto";
 import { sendVerificationEmail } from "../utils/mailer";
 import { signAuthToken } from "../utils/jwt";
@@ -67,6 +67,15 @@ export async function register(req: Request, res: Response, next: NextFunction) 
       name: String(displayName).trim(),
       role,
       isEmailVerified: false,
+    });
+
+    await Portfolio.create({
+      user: user._id,
+      cashBalance: 100000,
+      startingCash: 100000,
+      totalAssetValue: 0,
+      totalEquity: 100000,
+      roi: 0,
     });
 
     const rawToken = createRawToken();

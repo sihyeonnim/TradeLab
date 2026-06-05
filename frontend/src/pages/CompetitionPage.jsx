@@ -16,16 +16,46 @@ function formatPercent(value) {
   return `${sign}${numberValue.toFixed(2)}%`;
 }
 
-function formatDate(value) {
+function formatDateTime(value) {
   if (!value) {
     return "-";
   }
 
-  return new Date(value).toLocaleDateString("en-US", {
+  return new Date(value).toLocaleString("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+}
+
+function formatDate(value) {
+  return formatDateTime(value);
+}
+
+function formatParticipantPercent(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatPercent(entry?.roi || 0);
+}
+
+function formatParticipantProfit(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatCurrency(entry?.profit || 0);
+}
+
+function formatParticipantRank(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "-";
+  }
+
+  return entry?.rank || "-";
 }
 
 const defaultForm = {
@@ -66,6 +96,26 @@ export default function CompetitionPage() {
       null
     );
   }, [competitions, adminCompetitions, selectedCompetitionId]);
+
+  function getJoinedCompetitionStatus(item) {
+    return (
+      item?.competition?.status ||
+      item?.participation?.competitionStatus ||
+      "-"
+    );
+  }
+
+  const activeJoinedCompetitions = useMemo(() => {
+    return joinedCompetitions.filter(
+      (item) => getJoinedCompetitionStatus(item) !== "ENDED"
+    );
+  }, [joinedCompetitions]);
+
+  const completedJoinedCompetitions = useMemo(() => {
+    return joinedCompetitions.filter(
+      (item) => getJoinedCompetitionStatus(item) === "ENDED"
+    );
+  }, [joinedCompetitions]);
 
   async function loadLeaderboard(competitionId) {
     if (!competitionId) {
@@ -173,6 +223,17 @@ export default function CompetitionPage() {
     }
   }, [selectedCompetitionId]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      loadData(selectedCompetitionId).catch(() => {});
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCompetitionId]);
+
   function isJoined(competitionId) {
     return joinedCompetitions.some(
       (item) => String(item.competition?.id) === String(competitionId)
@@ -207,6 +268,52 @@ export default function CompetitionPage() {
       });
     }
   }
+
+  async function leaveCompetition(competitionId) {
+    const confirmed = window.confirm(
+      "Do you want to leave this competition? Your leaderboard record for this competition will be removed."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setStatus((prev) => ({
+      ...prev,
+      error: "",
+      message: "",
+      submitting: true,
+    }));
+
+    try {
+      const response = await api.delete(`/competitions/${competitionId}/join`);
+
+      let nextSelectedId = selectedCompetitionId;
+      if (String(selectedCompetitionId) === String(competitionId)) {
+        nextSelectedId = competitions.find(
+          (competition) => String(competition.id) !== String(competitionId)
+        )?.id || "";
+      }
+
+      await loadData(nextSelectedId);
+
+      setStatus({
+        loading: false,
+        error: "",
+        message: response.data.message || "Left competition successfully.",
+        submitting: false,
+      });
+    } catch (error) {
+      setStatus({
+        loading: false,
+        error:
+          error.response?.data?.message || "Failed to leave competition.",
+        message: "",
+        submitting: false,
+      });
+    }
+  }
+
 
   function updateForm(event) {
     const { name, value } = event.target;
@@ -300,8 +407,8 @@ export default function CompetitionPage() {
                     <h3>{competition.title}</h3>
                     <p>{competition.description}</p>
                     <p className="muted-text">
-                      {formatDate(competition.startDate)} →{" "}
-                      {formatDate(competition.endDate)}
+                      {formatDateTime(competition.startDate)} →{" "}
+                      {formatDateTime(competition.endDate)}
                     </p>
                     <p className="muted-text">
                       Metric: {competition.rankingMetric}
@@ -317,12 +424,24 @@ export default function CompetitionPage() {
                     </button>
 
                     {user?.role === "USER" ? (
-                      <button
-                        onClick={() => joinCompetition(competition.id)}
-                        disabled={status.submitting || isJoined(competition.id)}
-                      >
-                        {isJoined(competition.id) ? "Joined" : "Join"}
-                      </button>
+                      isJoined(competition.id) ? (
+                        <button
+                          type="button"
+                          className="danger-button"
+                          onClick={() => leaveCompetition(competition.id)}
+                          disabled={status.submitting}
+                        >
+                          {status.submitting ? "Processing..." : "Leave"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => joinCompetition(competition.id)}
+                          disabled={status.submitting}
+                        >
+                          {status.submitting ? "Processing..." : "Join"}
+                        </button>
+                      )
                     ) : (
                       <button disabled>USER only</button>
                     )}
@@ -356,12 +475,12 @@ export default function CompetitionPage() {
                 <tbody>
                   {leaderboard.map((entry) => (
                     <tr key={entry.id}>
-                      <td>{entry.rank}</td>
+                      <td>{formatParticipantRank(entry)}</td>
                       <td>{entry.user?.name || "User"}</td>
                       <td>{formatCurrency(entry.startingPortfolioValue)}</td>
                       <td>{formatCurrency(entry.currentPortfolioValue)}</td>
-                      <td>{formatCurrency(entry.profit)}</td>
-                      <td>{formatPercent(entry.roi)}</td>
+                      <td>{formatParticipantProfit(entry)}</td>
+                      <td>{formatParticipantPercent(entry)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -372,21 +491,71 @@ export default function CompetitionPage() {
 
         <article className="dashboard-card wide">
           <p className="eyebrow">My competitions</p>
-          <h3>Joined competitions</h3>
+          <h3>Active joined competitions</h3>
 
-          {joinedCompetitions.length === 0 ? (
-            <p className="muted-text">You have not joined any competitions.</p>
+          {activeJoinedCompetitions.length === 0 ? (
+            <p className="muted-text">You have no active or upcoming joined competitions.</p>
           ) : (
             <div className="compact-list">
-              {joinedCompetitions.map((item) => (
+              {activeJoinedCompetitions.map((item) => (
                 <div className="compact-row" key={item.participation.id}>
                   <div>
                     <strong>{item.competition?.title}</strong>
                     <span>{item.competition?.status}</span>
                   </div>
-                  <em>{formatPercent(item.participation.roi)}</em>
+                  <div className="inline-actions">
+                    <em>{formatParticipantPercent(item.participation)}</em>
+                    <button
+                      type="button"
+                      className="danger-button"
+                      onClick={() => leaveCompetition(item.competition?.id)}
+                      disabled={status.submitting || !item.competition?.id}
+                    >
+                      Leave
+                    </button>
+                  </div>
                 </div>
               ))}
+            </div>
+          )}
+        </article>
+
+        <article className="dashboard-card wide">
+          <p className="eyebrow">History</p>
+          <h3>Past joined competitions</h3>
+
+          {completedJoinedCompetitions.length === 0 ? (
+            <p className="muted-text">No completed competition history yet.</p>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Competition</th>
+                    <th>Status</th>
+                    <th>Final Rank</th>
+                    <th>Final Profit</th>
+                    <th>Final ROI</th>
+                    <th>Period</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {completedJoinedCompetitions.map((item) => (
+                    <tr key={item.participation.id}>
+                      <td>{item.competition?.title || "Competition"}</td>
+                      <td>{item.competition?.status || "ENDED"}</td>
+                      <td>{formatParticipantRank(item.participation)}</td>
+                      <td>{formatParticipantProfit(item.participation)}</td>
+                      <td>{formatParticipantPercent(item.participation)}</td>
+                      <td>
+                        {formatDateTime(item.competition?.startDate)} → {" "}
+                        {formatDateTime(item.competition?.endDate)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </article>
@@ -471,7 +640,7 @@ export default function CompetitionPage() {
                       <strong>{competition.title}</strong>
                       <span>{competition.status}</span>
                     </div>
-                    <em>{formatDate(competition.startDate)}</em>
+                    <em>{formatDateTime(competition.startDate)}</em>
                   </div>
                 ))}
               </div>
@@ -507,8 +676,8 @@ export default function CompetitionPage() {
                         <td>{competition.status}</td>
                         <td>{competition.participantCount || 0}</td>
                         <td>
-                          {formatDate(competition.startDate)} →{" "}
-                          {formatDate(competition.endDate)}
+                          {formatDateTime(competition.startDate)} →{" "}
+                          {formatDateTime(competition.endDate)}
                         </td>
                       </tr>
                     ))}

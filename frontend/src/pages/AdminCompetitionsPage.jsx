@@ -17,16 +17,46 @@ function formatPercent(value) {
   return `${sign}${numberValue.toFixed(2)}%`;
 }
 
-function formatDate(value) {
+function formatDateTime(value) {
   if (!value) {
     return "-";
   }
 
-  return new Date(value).toLocaleDateString("en-US", {
+  return new Date(value).toLocaleString("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+}
+
+function formatDate(value) {
+  return formatDateTime(value);
+}
+
+function formatParticipantPercent(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatPercent(entry?.roi || 0);
+}
+
+function formatParticipantProfit(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatCurrency(entry?.profit || 0);
+}
+
+function formatParticipantRank(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "-";
+  }
+
+  return entry?.rank || "-";
 }
 
 export default function AdminCompetitionsPage() {
@@ -53,7 +83,7 @@ export default function AdminCompetitionsPage() {
   async function loadOverview(nextSelectedId) {
     const [meResponse, overviewResponse] = await Promise.all([
       api.get("/auth/me"),
-      api.get("/admin/competitions/overview"),
+      api.get("/competitions/admin/all"),
     ]);
 
     const me = meResponse.data.user;
@@ -84,7 +114,7 @@ export default function AdminCompetitionsPage() {
     }
 
     const response = await api.get(
-      `/admin/competitions/${competitionId}/participants`
+      `/competitions/admin/${competitionId}/participants`
     );
 
     setSelectedCompetition(response.data.competition);
@@ -134,6 +164,17 @@ export default function AdminCompetitionsPage() {
     if (selectedCompetitionId) {
       updateParticipants();
     }
+  }, [selectedCompetitionId]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      loadOverview(selectedCompetitionId).catch(() => {});
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompetitionId]);
 
   if (status.loading) {
@@ -233,8 +274,8 @@ export default function AdminCompetitionsPage() {
                       <td>{competition.rankingMetric}</td>
                       <td>{competition.participantCount || 0}</td>
                       <td>
-                        {formatDate(competition.startDate)} →{" "}
-                        {formatDate(competition.endDate)}
+                        {formatDateTime(competition.startDate)} →{" "}
+                        {formatDateTime(competition.endDate)}
                       </td>
                       <td>
                         <button
@@ -299,8 +340,8 @@ export default function AdminCompetitionsPage() {
                     <div>
                       <strong>Period</strong>
                       <span>
-                        {formatDate(selectedCompetition.startDate)} →{" "}
-                        {formatDate(selectedCompetition.endDate)}
+                        {formatDateTime(selectedCompetition.startDate)} →{" "}
+                        {formatDateTime(selectedCompetition.endDate)}
                       </span>
                     </div>
                     <em>{participants.length} users</em>
@@ -329,9 +370,9 @@ export default function AdminCompetitionsPage() {
                       </thead>
 
                       <tbody>
-                        {participants.map((participant, index) => (
+                        {participants.map((participant) => (
                           <tr key={participant.id}>
-                            <td>{participant.rank || index + 1}</td>
+                            <td>{formatParticipantRank(participant)}</td>
                             <td>
                               <strong>
                                 {participant.user?.displayName ||
@@ -346,7 +387,7 @@ export default function AdminCompetitionsPage() {
                             <td>
                               {formatCurrency(participant.currentPortfolioValue)}
                             </td>
-                            <td>{formatCurrency(participant.profit)}</td>
+                            <td>{formatParticipantProfit(participant)}</td>
                             <td
                               className={
                                 Number(participant.roi || 0) >= 0
@@ -354,7 +395,7 @@ export default function AdminCompetitionsPage() {
                                   : "negative"
                               }
                             >
-                              {formatPercent(participant.roi)}
+                              {formatParticipantPercent(participant)}
                             </td>
                             <td>{formatDate(participant.joinedAt)}</td>
                           </tr>

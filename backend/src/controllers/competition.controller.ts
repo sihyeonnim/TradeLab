@@ -7,7 +7,6 @@ import {
   CompetitionRankingMetric,
   CompetitionStatus,
   Portfolio,
-  User,
 } from "../models";
 
 function getCurrentUser(req: Request): any {
@@ -25,11 +24,23 @@ function getParamAsString(value: unknown) {
 function toNumber(value: unknown, fallback = 0) {
   const parsed = Number(value);
 
-  if (Number.isNaN(parsed)) {
+  if (!Number.isFinite(parsed)) {
     return fallback;
   }
 
   return parsed;
+}
+
+function resolveCompetitionDates(competition: any) {
+  const doc =
+    typeof competition?.toObject === "function"
+      ? competition.toObject()
+      : competition;
+
+  return {
+    startsAt: new Date(doc?.startsAt || doc?.startDate || Date.now()),
+    endsAt: new Date(doc?.endsAt || doc?.endDate || Date.now()),
+  };
 }
 
 function calculateCompetitionStatus(startsAt: Date, endsAt: Date) {
@@ -39,11 +50,55 @@ function calculateCompetitionStatus(startsAt: Date, endsAt: Date) {
     return CompetitionStatus.UPCOMING;
   }
 
-  if (now > endsAt) {
+  if (now >= endsAt) {
     return CompetitionStatus.ENDED;
   }
 
   return CompetitionStatus.ACTIVE;
+}
+
+function getDynamicCompetitionStatus(competition: any) {
+  const { startsAt, endsAt } = resolveCompetitionDates(competition);
+
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+    return competition?.status || CompetitionStatus.UPCOMING;
+  }
+
+  return calculateCompetitionStatus(startsAt, endsAt);
+}
+
+async function syncCompetitionStatus(competition: any) {
+  if (!competition) {
+    return null;
+  }
+
+  const dynamicStatus = getDynamicCompetitionStatus(competition);
+  const currentStatus = String(competition.status || "").toUpperCase();
+
+  if (currentStatus !== dynamicStatus) {
+    if (typeof competition.set === "function") {
+      competition.set("status", dynamicStatus);
+      await competition.save();
+      return competition;
+    }
+
+    await Competition.findByIdAndUpdate(competition._id || competition.id, {
+      $set: { status: dynamicStatus },
+    });
+
+    return {
+      ...competition,
+      status: dynamicStatus,
+    };
+  }
+
+  return competition;
+}
+
+async function syncManyCompetitionStatuses(competitions: any[]) {
+  return Promise.all(
+    competitions.map((competition) => syncCompetitionStatus(competition))
+  );
 }
 
 function normalizeUser(user: any) {
@@ -55,8 +110,8 @@ function normalizeUser(user: any) {
 
   return {
     id: String(doc._id || doc.id),
-    name: doc.name,
-    displayName: doc.displayName || doc.name,
+    name: doc.name || doc.displayName || doc.email,
+    displayName: doc.displayName || doc.name || doc.email,
     email: doc.email,
     role: doc.role,
   };
@@ -74,6 +129,7 @@ function normalizeCompetition(competition: any, extra: any = {}) {
 
   const startsAt = doc.startsAt || doc.startDate;
   const endsAt = doc.endsAt || doc.endDate;
+  const dynamicStatus = getDynamicCompetitionStatus(doc);
 
   return {
     id: String(doc._id || doc.id),
@@ -85,7 +141,11 @@ function normalizeCompetition(competition: any, extra: any = {}) {
     startDate: startsAt,
     endsAt,
     endDate: endsAt,
-    status: doc.status,
+    status: dynamicStatus,
+    storedStatus: doc.status,
+    isUpcoming: dynamicStatus === CompetitionStatus.UPCOMING,
+    isActive: dynamicStatus === CompetitionStatus.ACTIVE,
+    isEnded: dynamicStatus === CompetitionStatus.ENDED,
     isDefault: Boolean(doc.isDefault),
     rankingMetric:
       doc.rankingMetric || CompetitionRankingMetric.TOTAL_PORTFOLIO_ROI,
@@ -163,27 +223,70 @@ function calculatePortfolioValue(portfolio: any) {
   return cashBalance || 100000;
 }
 
-async function recalculateLeaderboard(competitionId: string) {
+async function recalculateLeaderboard(
+  competitionId: string,
+  forcedStatus?: CompetitionStatus | string
+) {
+  const competition = await Competition.findById(competitionId);
+
+  if (!competition) {
+    return [];
+  }
+
+  const previousStatus = String(competition.status || "").toUpperCase();
+  const competitionStatus = String(
+    forcedStatus || getDynamicCompetitionStatus(competition)
+  ).toUpperCase();
+
   const participants: any[] = await CompetitionParticipant.find({
     competition: competitionId,
   })
-    .populate("user", "name email role")
+    .populate("user", "name displayName email role")
     .sort({ joinedAt: 1 });
+
+  const hasExistingFinalRanks =
+    participants.length > 0 &&
+    participants.every((participant) => {
+      const rank = Number(participant.rank);
+      return Number.isFinite(rank) && rank > 0;
+    });
+
+  const shouldFreezeEndedScores =
+    competitionStatus === CompetitionStatus.ENDED &&
+    previousStatus === CompetitionStatus.ENDED &&
+    hasExistingFinalRanks;
 
   const recalculated = [];
 
   for (const participant of participants) {
+    const startingPortfolioValue = toNumber(
+      participant.startingPortfolioValue ?? participant.startingEquity,
+      100000
+    );
+
+    if (competitionStatus === CompetitionStatus.UPCOMING) {
+      participant.currentPortfolioValue = startingPortfolioValue;
+      participant.currentEquity = startingPortfolioValue;
+      participant.startingPortfolioValue = startingPortfolioValue;
+      participant.startingEquity = startingPortfolioValue;
+      participant.profit = 0;
+      participant.roi = 0;
+      participant.rank = undefined;
+      await participant.save();
+      recalculated.push(participant);
+      continue;
+    }
+
+    if (shouldFreezeEndedScores) {
+      recalculated.push(participant);
+      continue;
+    }
+
     const portfolio =
       (await Portfolio.findById(participant.portfolio)) ||
       (await Portfolio.findOne({ user: participant.user?._id || participant.user }));
 
     const currentPortfolioValue = calculatePortfolioValue(portfolio);
-
-    const startingPortfolioValue = toNumber(
-      participant.startingPortfolioValue ?? participant.startingEquity,
-      currentPortfolioValue
-    );
-
     const profit = currentPortfolioValue - startingPortfolioValue;
     const roi =
       startingPortfolioValue > 0
@@ -200,22 +303,44 @@ async function recalculateLeaderboard(competitionId: string) {
     recalculated.push(participant);
   }
 
-  recalculated.sort((a, b) => {
-    const roiDiff = toNumber(b.roi, 0) - toNumber(a.roi, 0);
+  if (competitionStatus !== CompetitionStatus.UPCOMING) {
+    recalculated.sort((a, b) => {
+      const rankA = Number(a.rank);
+      const rankB = Number(b.rank);
 
-    if (roiDiff !== 0) {
-      return roiDiff;
+      if (shouldFreezeEndedScores && Number.isFinite(rankA) && Number.isFinite(rankB)) {
+        return rankA - rankB;
+      }
+
+      const roiDiff = toNumber(b.roi, 0) - toNumber(a.roi, 0);
+
+      if (roiDiff !== 0) {
+        return roiDiff;
+      }
+
+      return toNumber(b.profit, 0) - toNumber(a.profit, 0);
+    });
+
+    if (!shouldFreezeEndedScores) {
+      for (let index = 0; index < recalculated.length; index += 1) {
+        recalculated[index].rank = index + 1;
+        await recalculated[index].save();
+      }
     }
-
-    return toNumber(b.profit, 0) - toNumber(a.profit, 0);
-  });
-
-  for (let index = 0; index < recalculated.length; index += 1) {
-    recalculated[index].rank = index + 1;
-    await recalculated[index].save();
   }
 
-  return recalculated.map((participant) => normalizeParticipant(participant));
+  if (previousStatus !== competitionStatus) {
+    competition.status = competitionStatus as CompetitionStatus;
+    await competition.save();
+  }
+
+  return recalculated.map((participant) =>
+    normalizeParticipant(participant, {
+      competitionStatus,
+      scorePending: competitionStatus === CompetitionStatus.UPCOMING,
+      scoreFinal: competitionStatus === CompetitionStatus.ENDED,
+    })
+  );
 }
 
 export async function listCompetitions(
@@ -228,16 +353,19 @@ export async function listCompetitions(
 
     const competitions = await Competition.find({
       $or: [
+        { endsAt: { $gte: now } },
+        { endDate: { $gte: now } },
         { status: CompetitionStatus.ACTIVE },
         { status: CompetitionStatus.UPCOMING },
-        { endsAt: { $gte: now } },
       ],
     })
-      .populate("createdBy", "name email role")
+      .populate("createdBy", "name displayName email role")
       .sort({ startsAt: 1, createdAt: -1 });
 
+    const syncedCompetitions = await syncManyCompetitionStatuses(competitions);
+
     return res.json({
-      competitions: competitions.map((competition) =>
+      competitions: syncedCompetitions.map((competition) =>
         normalizeCompetition(competition)
       ),
     });
@@ -256,19 +384,23 @@ export async function getCurrentCompetition(
 
     let competition: any = await Competition.findOne({
       $or: [
-        { status: CompetitionStatus.ACTIVE },
         {
           startsAt: { $lte: now },
-          endsAt: { $gte: now },
+          endsAt: { $gt: now },
         },
+        {
+          startDate: { $lte: now },
+          endDate: { $gt: now },
+        },
+        { status: CompetitionStatus.ACTIVE },
       ],
     })
-      .populate("createdBy", "name email role")
+      .populate("createdBy", "name displayName email role")
       .sort({ isDefault: -1, startsAt: -1, createdAt: -1 });
 
     if (!competition) {
       competition = await Competition.findOne({})
-        .populate("createdBy", "name email role")
+        .populate("createdBy", "name displayName email role")
         .sort({ isDefault: -1, startsAt: -1, createdAt: -1 });
     }
 
@@ -279,7 +411,12 @@ export async function getCurrentCompetition(
       });
     }
 
-    const leaderboard = await recalculateLeaderboard(String(competition._id));
+    competition = await syncCompetitionStatus(competition);
+    const competitionStatus = getDynamicCompetitionStatus(competition);
+    const leaderboard = await recalculateLeaderboard(
+      String(competition._id),
+      competitionStatus
+    );
 
     return res.json({
       competition: normalizeCompetition(competition),
@@ -305,16 +442,39 @@ export async function listMyCompetitions(
         path: "competition",
         populate: {
           path: "createdBy",
-          select: "name email role",
+          select: "name displayName email role",
         },
       })
       .sort({ joinedAt: -1 });
 
+    const rows = [];
+
+    for (const participant of participants as any[]) {
+      if (!participant.competition) {
+        continue;
+      }
+
+      const competition: any = await syncCompetitionStatus(participant.competition);
+      const competitionStatus = getDynamicCompetitionStatus(competition);
+      const leaderboard = await recalculateLeaderboard(
+        String(competition._id || competition.id),
+        competitionStatus
+      );
+      const normalizedParticipant =
+        leaderboard.find((entry: any) => entry.id === String(participant._id)) ||
+        normalizeParticipant(participant, {
+          competitionStatus,
+          scorePending: competitionStatus === CompetitionStatus.UPCOMING,
+        });
+
+      rows.push({
+        participation: normalizedParticipant,
+        competition: normalizeCompetition(competition),
+      });
+    }
+
     return res.json({
-      competitions: participants.map((participant: any) => ({
-        participation: normalizeParticipant(participant),
-        competition: normalizeCompetition(participant.competition),
-      })),
+      competitions: rows,
     });
   } catch (error) {
     next(error);
@@ -335,9 +495,9 @@ export async function getCompetitionDetail(
       });
     }
 
-    const competition = await Competition.findById(competitionId).populate(
+    let competition: any = await Competition.findById(competitionId).populate(
       "createdBy",
-      "name email role"
+      "name displayName email role"
     );
 
     if (!competition) {
@@ -345,6 +505,8 @@ export async function getCompetitionDetail(
         message: "Competition not found.",
       });
     }
+
+    competition = await syncCompetitionStatus(competition);
 
     const participantCount = await CompetitionParticipant.countDocuments({
       competition: competitionId,
@@ -381,7 +543,7 @@ export async function joinCompetition(
       });
     }
 
-    const competition = await Competition.findById(competitionId);
+    let competition: any = await Competition.findById(competitionId);
 
     if (!competition) {
       return res.status(404).json({
@@ -389,10 +551,8 @@ export async function joinCompetition(
       });
     }
 
-    const status = calculateCompetitionStatus(
-      new Date(competition.startsAt),
-      new Date(competition.endsAt)
-    );
+    competition = await syncCompetitionStatus(competition);
+    const status = getDynamicCompetitionStatus(competition);
 
     if (status === CompetitionStatus.ENDED) {
       return res.status(400).json({
@@ -426,7 +586,11 @@ export async function joinCompetition(
     return res.status(201).json({
       message: "Competition joined successfully.",
       participant: normalizeParticipant(
-        await participant.populate("user", "name email role")
+        await participant.populate("user", "name displayName email role"),
+        {
+          competitionStatus: status,
+          scorePending: status === CompetitionStatus.UPCOMING,
+        }
       ),
     });
   } catch (error: any) {
@@ -436,6 +600,66 @@ export async function joinCompetition(
       });
     }
 
+    next(error);
+  }
+}
+
+export async function leaveCompetition(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const user = getCurrentUser(req);
+    const competitionId = getParamAsString(req.params.competitionId);
+
+    if (user.role !== "USER") {
+      return res.status(403).json({
+        message: "Only USER accounts can leave competitions.",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(competitionId)) {
+      return res.status(400).json({
+        message: "Valid competitionId is required.",
+      });
+    }
+
+    let competition: any = await Competition.findById(competitionId);
+
+    if (!competition) {
+      return res.status(404).json({
+        message: "Competition not found.",
+      });
+    }
+
+    competition = await syncCompetitionStatus(competition);
+    const status = getDynamicCompetitionStatus(competition);
+
+    if (status === CompetitionStatus.ENDED) {
+      return res.status(400).json({
+        message: "Ended competitions cannot be left.",
+      });
+    }
+
+    const participant = await CompetitionParticipant.findOne({
+      competition: competitionId,
+      user: user._id,
+    });
+
+    if (!participant) {
+      return res.status(404).json({
+        message: "Competition participation not found.",
+      });
+    }
+
+    await CompetitionParticipant.deleteOne({ _id: participant._id });
+
+    return res.json({
+      message: "Left competition successfully.",
+      competitionId,
+    });
+  } catch (error) {
     next(error);
   }
 }
@@ -454,9 +678,9 @@ export async function getCompetitionLeaderboard(
       });
     }
 
-    const competition = await Competition.findById(competitionId).populate(
+    let competition: any = await Competition.findById(competitionId).populate(
       "createdBy",
-      "name email role"
+      "name displayName email role"
     );
 
     if (!competition) {
@@ -465,7 +689,12 @@ export async function getCompetitionLeaderboard(
       });
     }
 
-    const leaderboard = await recalculateLeaderboard(competitionId);
+    competition = await syncCompetitionStatus(competition);
+    const competitionStatus = getDynamicCompetitionStatus(competition);
+    const leaderboard = await recalculateLeaderboard(
+      competitionId,
+      competitionStatus
+    );
 
     return res.json({
       competition: normalizeCompetition(competition),
@@ -511,6 +740,7 @@ export async function createInstructorCompetition(
     const resolvedEndsAt = new Date(
       endsAt || endDate || Date.now() + 1000 * 60 * 60 * 24 * 7
     );
+    const now = new Date();
 
     if (Number.isNaN(resolvedStartsAt.getTime())) {
       return res.status(400).json({
@@ -530,6 +760,12 @@ export async function createInstructorCompetition(
       });
     }
 
+    if (resolvedEndsAt <= now) {
+      return res.status(400).json({
+        message: "endDate must be in the future.",
+      });
+    }
+
     const competition = await Competition.create({
       title,
       description,
@@ -546,7 +782,7 @@ export async function createInstructorCompetition(
 
     const populated = await competition.populate(
       "createdBy",
-      "name email role"
+      "name displayName email role"
     );
 
     return res.status(201).json({
@@ -580,11 +816,13 @@ export async function listInstructorCompetitions(
           };
 
     const competitions = await Competition.find(filter)
-      .populate("createdBy", "name email role")
-      .sort({ createdAt: -1 });
+      .populate("createdBy", "name displayName email role")
+      .sort({ startsAt: -1, createdAt: -1 });
+
+    const syncedCompetitions = await syncManyCompetitionStatuses(competitions);
 
     return res.json({
-      competitions: competitions.map((competition) =>
+      competitions: syncedCompetitions.map((competition) =>
         normalizeCompetition(competition)
       ),
     });
@@ -608,8 +846,10 @@ export async function listAdminCompetitions(
     }
 
     const competitions: any[] = await Competition.find({})
-      .populate("createdBy", "name email role")
-      .sort({ createdAt: -1 });
+      .populate("createdBy", "name displayName email role")
+      .sort({ startsAt: -1, createdAt: -1 });
+
+    const syncedCompetitions = await syncManyCompetitionStatuses(competitions);
 
     const counts = await CompetitionParticipant.aggregate([
       {
@@ -625,7 +865,7 @@ export async function listAdminCompetitions(
     );
 
     return res.json({
-      competitions: competitions.map((competition) =>
+      competitions: syncedCompetitions.map((competition: any) =>
         normalizeCompetition(competition, {
           participantCount: countMap.get(String(competition._id)) || 0,
         })
@@ -658,9 +898,9 @@ export async function listAdminCompetitionParticipants(
       });
     }
 
-    const competition = await Competition.findById(competitionId).populate(
+    let competition: any = await Competition.findById(competitionId).populate(
       "createdBy",
-      "name email role"
+      "name displayName email role"
     );
 
     if (!competition) {
@@ -669,7 +909,12 @@ export async function listAdminCompetitionParticipants(
       });
     }
 
-    const participants = await recalculateLeaderboard(competitionId);
+    competition = await syncCompetitionStatus(competition);
+    const competitionStatus = getDynamicCompetitionStatus(competition);
+    const participants = await recalculateLeaderboard(
+      competitionId,
+      competitionStatus
+    );
 
     return res.json({
       competition: normalizeCompetition(competition),
@@ -679,7 +924,6 @@ export async function listAdminCompetitionParticipants(
     next(error);
   }
 }
-
 
 export async function listInstructorCompetitionParticipants(
   req: Request,
@@ -702,7 +946,7 @@ export async function listInstructorCompetitionParticipants(
       });
     }
 
-    const competition: any = await Competition.findById(competitionId).populate(
+    let competition: any = await Competition.findById(competitionId).populate(
       "createdBy",
       "name displayName email role"
     );
@@ -712,6 +956,8 @@ export async function listInstructorCompetitionParticipants(
         message: "Competition not found.",
       });
     }
+
+    competition = await syncCompetitionStatus(competition);
 
     const createdById = String(
       competition.createdBy?._id || competition.createdBy || ""
@@ -723,7 +969,11 @@ export async function listInstructorCompetitionParticipants(
       });
     }
 
-    const participants = await recalculateLeaderboard(competitionId);
+    const competitionStatus = getDynamicCompetitionStatus(competition);
+    const participants = await recalculateLeaderboard(
+      competitionId,
+      competitionStatus
+    );
 
     return res.json({
       competition: normalizeCompetition(competition),
@@ -733,4 +983,3 @@ export async function listInstructorCompetitionParticipants(
     next(error);
   }
 }
-

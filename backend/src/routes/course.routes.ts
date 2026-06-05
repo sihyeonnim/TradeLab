@@ -16,6 +16,7 @@ import {
   approveCourse,
   rejectCourse,
   enrollInCourse,
+  unenrollFromCourse,
   listMyEnrollments,
   listInstructorCourseEnrollments,
 } from "../controllers/course.controller";
@@ -29,6 +30,7 @@ router.get("/courses", requireAuth, listApprovedCourses);
 router.get("/courses/:courseId", requireAuth, getCourseDetail);
 router.get("/courses/:courseId/lessons", requireAuth, listCourseLessons);
 router.post("/courses/:courseId/enroll", requireAuth, requireRole("USER"), enrollInCourse);
+router.delete("/courses/:courseId/enroll", requireAuth, requireRole("USER"), unenrollFromCourse);
 router.get("/enrollments/me", requireAuth, listMyEnrollments);
 
 router.post(

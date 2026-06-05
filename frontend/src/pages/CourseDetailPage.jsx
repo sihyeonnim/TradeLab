@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { buildVideoSrc, canPlayLocalVideo } from "../video";
@@ -11,29 +11,34 @@ export default function CourseDetailPage() {
   const [user, setUser] = useState(null);
   const [course, setCourse] = useState(null);
   const [lessons, setLessons] = useState([]);
+  const [enrollments, setEnrollments] = useState([]);
   const [status, setStatus] = useState({
     loading: true,
     error: "",
     message: "",
+    submitting: false,
   });
 
   async function loadData() {
-    const [meResponse, courseResponse, lessonsResponse] = await Promise.all([
-      api.get("/auth/me"),
-      api.get(`/courses/${courseId}`),
-      api.get(`/courses/${courseId}/lessons`),
-    ]);
+    const [meResponse, courseResponse, lessonsResponse, enrollmentsResponse] =
+      await Promise.all([
+        api.get("/auth/me"),
+        api.get(`/courses/${courseId}`),
+        api.get(`/courses/${courseId}/lessons`),
+        api.get("/enrollments/me").catch(() => ({ data: { enrollments: [] } })),
+      ]);
 
     setUser(meResponse.data.user);
     setCourse(courseResponse.data.course);
     setLessons(lessonsResponse.data.lessons || []);
+    setEnrollments(enrollmentsResponse.data.enrollments || []);
   }
 
   useEffect(() => {
     async function init() {
       try {
         await loadData();
-        setStatus({ loading: false, error: "", message: "" });
+        setStatus({ loading: false, error: "", message: "", submitting: false });
       } catch (error) {
         if (error.response?.status === 401) {
           navigate("/login");
@@ -44,6 +49,7 @@ export default function CourseDetailPage() {
           loading: false,
           error: error.response?.data?.message || "Failed to load course.",
           message: "",
+          submitting: false,
         });
       }
     }
@@ -51,15 +57,72 @@ export default function CourseDetailPage() {
     init();
   }, [courseId, navigate]);
 
+  function getEnrollmentCourseId(enrollment) {
+    if (!enrollment?.course) {
+      return null;
+    }
+
+    if (typeof enrollment.course === "string") {
+      return enrollment.course;
+    }
+
+    return enrollment.course.id || enrollment.course._id || null;
+  }
+
+  const enrolled = useMemo(() => {
+    return enrollments.some(
+      (enrollment) => String(getEnrollmentCourseId(enrollment)) === String(courseId)
+    );
+  }, [courseId, enrollments]);
+
   async function enroll() {
+    setStatus((prev) => ({ ...prev, error: "", message: "", submitting: true }));
+
     try {
       const response = await api.post(`/courses/${courseId}/enroll`);
-      setStatus({ loading: false, error: "", message: response.data.message });
+      await loadData();
+      setStatus({
+        loading: false,
+        error: "",
+        message: response.data.message || "Enrolled successfully.",
+        submitting: false,
+      });
     } catch (error) {
       setStatus({
         loading: false,
         error: error.response?.data?.message || "Enrollment failed.",
         message: "",
+        submitting: false,
+      });
+    }
+  }
+
+  async function unenroll() {
+    const confirmed = window.confirm(
+      "Do you want to unenroll from this course? You can enroll again later if the course is still available."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setStatus((prev) => ({ ...prev, error: "", message: "", submitting: true }));
+
+    try {
+      const response = await api.delete(`/courses/${courseId}/enroll`);
+      await loadData();
+      setStatus({
+        loading: false,
+        error: "",
+        message: response.data.message || "Unenrolled successfully.",
+        submitting: false,
+      });
+    } catch (error) {
+      setStatus({
+        loading: false,
+        error: error.response?.data?.message || "Unenrollment failed.",
+        message: "",
+        submitting: false,
       });
     }
   }
@@ -125,7 +188,20 @@ export default function CourseDetailPage() {
             </Link>
 
             {user?.role === "USER" ? (
-              <button onClick={enroll}>Enroll in this course</button>
+              enrolled ? (
+                <button
+                  type="button"
+                  className="danger-button"
+                  onClick={unenroll}
+                  disabled={status.submitting}
+                >
+                  {status.submitting ? "Processing..." : "Unenroll from this course"}
+                </button>
+              ) : (
+                <button onClick={enroll} disabled={status.submitting}>
+                  {status.submitting ? "Processing..." : "Enroll in this course"}
+                </button>
+              )
             ) : (
               <button disabled>Users only</button>
             )}

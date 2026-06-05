@@ -17,16 +17,46 @@ function formatPercent(value) {
   return `${sign}${numberValue.toFixed(2)}%`;
 }
 
-function formatDate(value) {
+function formatDateTime(value) {
   if (!value) {
     return "-";
   }
 
-  return new Date(value).toLocaleDateString("en-US", {
+  return new Date(value).toLocaleString("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+}
+
+function formatDate(value) {
+  return formatDateTime(value);
+}
+
+function formatParticipantPercent(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatPercent(entry?.roi || 0);
+}
+
+function formatParticipantProfit(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "Pending";
+  }
+
+  return formatCurrency(entry?.profit || 0);
+}
+
+function formatParticipantRank(entry) {
+  if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
+    return "-";
+  }
+
+  return entry?.rank || "-";
 }
 
 const defaultForm = {
@@ -152,6 +182,17 @@ export default function InstructorCompetitionsPage() {
     if (selectedCompetitionId) {
       updateParticipants();
     }
+  }, [selectedCompetitionId]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      loadData(selectedCompetitionId).catch(() => {});
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompetitionId]);
 
   function updateForm(event) {
@@ -336,8 +377,8 @@ export default function InstructorCompetitionsPage() {
                         <td>{competition.status}</td>
                         <td>{competition.rankingMetric}</td>
                         <td>
-                          {formatDate(competition.startDate)} →{" "}
-                          {formatDate(competition.endDate)}
+                          {formatDateTime(competition.startDate)} →{" "}
+                          {formatDateTime(competition.endDate)}
                         </td>
                         <td>{competition.participantCount ?? "-"}</td>
                         <td>
@@ -410,7 +451,7 @@ export default function InstructorCompetitionsPage() {
                       ) : (
                         participants.map((participant) => (
                           <tr key={participant.id}>
-                            <td>{participant.rank || "-"}</td>
+                            <td>{formatParticipantRank(participant)}</td>
                             <td>
                               {participant.user?.displayName ||
                                 participant.user?.name ||
@@ -427,8 +468,8 @@ export default function InstructorCompetitionsPage() {
                                 participant.currentPortfolioValue
                               )}
                             </td>
-                            <td>{formatCurrency(participant.profit)}</td>
-                            <td>{formatPercent(participant.roi)}</td>
+                            <td>{formatParticipantProfit(participant)}</td>
+                            <td>{formatParticipantPercent(participant)}</td>
                             <td>{formatDate(participant.joinedAt)}</td>
                           </tr>
                         ))

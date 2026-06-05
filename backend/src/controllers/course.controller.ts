@@ -3,17 +3,9 @@ import mongoose from "mongoose";
 import fs from "fs";
 import path from "path";
 
-import {
-  User,
-  Course,
-  Lesson,
-  Enrollment,
-  ActivityLog,
-} from "../models";
-
+import { Course, Lesson, Enrollment, ActivityLog } from "../models";
 import { toPublicVideoPath } from "../middleware/upload.middleware";
 
-const UserModel: any = User;
 const CourseModel: any = Course;
 const LessonModel: any = Lesson;
 const EnrollmentModel: any = Enrollment;
@@ -29,6 +21,7 @@ const COURSE_STATUS = {
 const ENROLLMENT_STATUS = {
   ACTIVE: "ACTIVE",
   COMPLETED: "COMPLETED",
+  DROPPED: "DROPPED",
 } as const;
 
 function getCurrentUser(req: Request): any {
@@ -72,9 +65,11 @@ function toStringArray(value: unknown): string[] {
 }
 
 function isApprovedCourse(course: any): boolean {
+  const plain = asPlainDoc(course);
+
   return (
-    course?.approvalStatus === COURSE_STATUS.APPROVED &&
-    course?.isPublished === true
+    plain?.approvalStatus === COURSE_STATUS.APPROVED &&
+    plain?.isPublished === true
   );
 }
 
@@ -82,26 +77,10 @@ function getParam(req: Request, name: string): string {
   const value = req.params[name];
 
   if (Array.isArray(value)) {
-    return value[0];
+    return String(value[0] || "");
   }
 
-  return String(value);
-}
-
-function canManageCourse(req: Request, course: any): boolean {
-  if (isAdmin(req)) {
-    return true;
-  }
-
-  if (!isInstructor(req)) {
-    return false;
-  }
-
-  const plain = asPlainDoc(course);
-  const instructorId = getIdValue(plain?.instructor ?? course?.instructor);
-  const currentUserId = getCurrentUserId(req);
-
-  return instructorId === currentUserId;
+  return String(value || "");
 }
 
 function asPlainDoc(doc: any) {
@@ -160,6 +139,22 @@ function getIdValue(value: any): string | null {
   return String(value);
 }
 
+function canManageCourse(req: Request, course: any): boolean {
+  if (isAdmin(req)) {
+    return true;
+  }
+
+  if (!isInstructor(req)) {
+    return false;
+  }
+
+  const plain = asPlainDoc(course);
+  const instructorId = getIdValue(plain?.instructor ?? course?.instructor);
+  const currentUserId = getCurrentUserId(req);
+
+  return instructorId === currentUserId;
+}
+
 function normalizeUser(user: any) {
   const plain = asPlainDoc(user);
 
@@ -170,8 +165,11 @@ function normalizeUser(user: any) {
   return {
     id: getDocId(user),
     name: plain.name,
+    displayName: plain.displayName || plain.name,
     email: plain.email,
     role: plain.role,
+    isEmailVerified: plain.isEmailVerified,
+    createdAt: plain.createdAt,
   };
 }
 
@@ -259,16 +257,22 @@ function normalizeEnrollment(enrollment: any) {
     user:
       plain.user && typeof plain.user === "object" && (plain.user.name || plain.user.email)
         ? normalizeUser(plain.user)
-        : String(plain.user),
+        : plain.user
+          ? String(plain.user)
+          : null,
     course:
       plain.course && typeof plain.course === "object" && plain.course.title
         ? normalizeCourse(plain.course)
-        : String(plain.course),
+        : plain.course
+          ? String(plain.course)
+          : null,
     status: plain.status,
     progressPercent: plain.progressPercent,
     completedLessons: plain.completedLessons || [],
     enrolledAt: plain.enrolledAt,
     completedAt: plain.completedAt ?? null,
+    createdAt: plain.createdAt,
+    updatedAt: plain.updatedAt,
   };
 }
 
@@ -321,11 +325,20 @@ async function findLessonWithCourse(lessonId: string) {
   }
 
   const lesson: any = await LessonModel.findById(lessonId);
+
   if (!lesson) {
     return null;
   }
 
-  const course: any = await CourseModel.findById(LessonModel.course);
+  const lessonPlain = asPlainDoc(lesson);
+  const courseId = getIdValue(lessonPlain?.course ?? lesson.course);
+
+  if (!courseId || !mongoose.Types.ObjectId.isValid(courseId)) {
+    return null;
+  }
+
+  const course: any = await CourseModel.findById(courseId);
+
   if (!course) {
     return null;
   }
@@ -343,8 +356,8 @@ export async function listApprovedCourses(
       approvalStatus: COURSE_STATUS.APPROVED,
       isPublished: true,
     })
-      .populate("instructor", "name email role")
-      .sort({ createdAt: -1 })
+      .populate("instructor", "name displayName email role")
+      .sort({ createdAt: -1 });
 
     return res.json({
       courses: courses.map(normalizeCourse),
@@ -361,8 +374,8 @@ export async function getCourseDetail(
 ) {
   try {
     const course: any = await CourseModel.findById(getParam(req, "courseId"))
-      .populate("instructor", "name email role")
-      .populate("approvedBy", "name email role");
+      .populate("instructor", "name displayName email role")
+      .populate("approvedBy", "name displayName email role");
 
     if (!course) {
       return res.status(404).json({ message: "Course not found." });
@@ -371,7 +384,7 @@ export async function getCourseDetail(
     const canView =
       isApprovedCourse(course) ||
       isAdmin(req) ||
-      getIdValue(asPlainDoc(course)?.instructor ?? course.instructor) === getCurrentUserId(req);
+      canManageCourse(req, course);
 
     if (!canView) {
       return res.status(403).json({
@@ -401,7 +414,7 @@ export async function createInstructorCourse(
       });
     }
 
-    const course = await CourseModel.create({
+    const course: any = await CourseModel.create({
       title: String(title).trim(),
       description: String(description).trim(),
       instructor: getCurrentUserId(req),
@@ -416,17 +429,15 @@ export async function createInstructorCourse(
       action: "COURSE_CREATED",
       message: "Course created",
       metadata: {
-        courseId: String(CourseModel._id),
-        title: CourseModel.title,
+        courseId: String(course._id),
+        title: course.title,
       },
     });
 
-    const populated = await CourseModel.findById(CourseModel._id)
-      .populate("instructor", "name email role")
-      .lean();
-
-    const createdCourse: any = await CourseModel.findById(course._id)
-      .populate("instructor", "name email role");
+    const createdCourse: any = await CourseModel.findById(course._id).populate(
+      "instructor",
+      "name displayName email role"
+    );
 
     return res.status(201).json({
       message: "Course created and submitted for approval.",
@@ -450,7 +461,7 @@ export async function listInstructorCourses(
         };
 
     const courses = await CourseModel.find(filter)
-      .populate("instructor", "name email role")
+      .populate("instructor", "name displayName email role")
       .sort({ createdAt: -1 });
 
     return res.json({
@@ -475,7 +486,7 @@ export async function updateInstructorCourse(
 
     if (!canManageCourse(req, course)) {
       return res.status(403).json({
-        message: "You do not have permission to edit this CourseModel.",
+        message: "You do not have permission to edit this course.",
       });
     }
 
@@ -488,25 +499,33 @@ export async function updateInstructorCourse(
     }
 
     if (req.body.tags !== undefined) {
-      CourseModel.tags = toStringArray(req.body.tags);
+      course.tags = toStringArray(req.body.tags);
     }
 
-    if (!isAdmin(req) && CourseModel.approvalStatus === COURSE_STATUS.APPROVED) {
-      CourseModel.approvalStatus = COURSE_STATUS.PENDING_APPROVAL;
-      CourseModel.isPublished = false;
-      CourseModel.approvedBy = undefined;
-      CourseModel.approvedAt = undefined;
+    if (!isAdmin(req) && course.approvalStatus === COURSE_STATUS.APPROVED) {
+      course.approvalStatus = COURSE_STATUS.PENDING_APPROVAL;
+      course.isPublished = false;
+      course.approvedBy = undefined;
+      course.approvedAt = undefined;
+      course.rejectionReason = undefined;
     }
 
-    await CourseModel.save();
+    if (course.approvalStatus === COURSE_STATUS.REJECTED) {
+      course.approvalStatus = COURSE_STATUS.PENDING_APPROVAL;
+      course.isPublished = false;
+      course.rejectionReason = undefined;
+    }
 
-    const populated = await CourseModel.findById(CourseModel._id)
-      .populate("instructor", "name email role")
-      .lean();
+    await course.save();
+
+    const populated: any = await CourseModel.findById(course._id).populate(
+      "instructor",
+      "name displayName email role"
+    );
 
     return res.json({
       message: "Course updated.",
-      course: normalizeCourse(populated),
+      course: normalizeCourse(populated || course),
     });
   } catch (error) {
     next(error);
@@ -527,31 +546,25 @@ export async function deleteInstructorCourse(
 
     if (!canManageCourse(req, course)) {
       return res.status(403).json({
-        message: "You do not have permission to delete this CourseModel.",
+        message: "You do not have permission to delete this course.",
       });
     }
 
-    if (
-      !isAdmin(req) &&
-      CourseModel.approvalStatus === COURSE_STATUS.APPROVED
-    ) {
-      return res.status(400).json({
-        message: "Approved courses cannot be deleted by instructors in this MVP.",
-      });
-    }
-
-    const lessons: any[] = await LessonModel.find({ course: CourseModel._id }).lean();
+    const courseId = String(course._id);
+    const lessons: any[] = await LessonModel.find({ course: courseId });
 
     for (const lesson of lessons) {
-      removeLocalFileIfExists(LessonModel.video?.path);
+      removeLocalFileIfExists(lesson.video?.path);
     }
 
-    await LessonModel.deleteMany({ course: CourseModel._id });
-    await EnrollmentModel.deleteMany({ course: CourseModel._id });
-    await CourseModel.deleteOne({ _id: CourseModel._id });
+    await LessonModel.deleteMany({ course: courseId });
+    await EnrollmentModel.deleteMany({ course: courseId });
+    await CourseModel.deleteOne({ _id: courseId });
 
     return res.json({
       message: "Course deleted.",
+      courseId,
+      deletedLessonCount: lessons.length,
     });
   } catch (error) {
     next(error);
@@ -624,7 +637,13 @@ export async function createLesson(
         : "Lesson created without video.",
       lesson: normalizeLesson(lesson),
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        message: "A lesson with the same order already exists in this course.",
+      });
+    }
+
     next(error);
   }
 }
@@ -658,7 +677,10 @@ export async function listCourseLessons(
       });
     }
 
-    const lessons = await LessonModel.find({ course: courseIdForDb })
+    const lessons = await LessonModel.find({ course: courseIdForDb }).sort({
+      order: 1,
+      createdAt: 1,
+    });
 
     return res.json({
       lessons: lessons.map(normalizeLesson),
@@ -684,32 +706,32 @@ export async function updateLesson(
 
     if (!canManageCourse(req, course)) {
       return res.status(403).json({
-        message: "You do not have permission to edit this LessonModel.",
+        message: "You do not have permission to edit this lesson.",
       });
     }
 
     if (req.body.title !== undefined) {
-      LessonModel.title = String(req.body.title).trim();
+      lesson.title = String(req.body.title).trim();
     }
 
     if (req.body.order !== undefined) {
-      LessonModel.order = toNumber(req.body.order, LessonModel.order);
+      lesson.order = toNumber(req.body.order, lesson.order);
     }
 
     if (req.body.summary !== undefined || req.body.description !== undefined) {
-      LessonModel.summary = req.body.summary ?? req.body.description;
+      lesson.summary = req.body.summary ?? req.body.description;
     }
 
     if (req.body.contentMarkdown !== undefined || req.body.content !== undefined) {
-      LessonModel.contentMarkdown = req.body.contentMarkdown ?? req.body.content;
+      lesson.contentMarkdown = req.body.contentMarkdown ?? req.body.content;
     }
 
     const publicVideoPath = toPublicVideoPath(req.file);
 
     if (publicVideoPath) {
-      removeLocalFileIfExists(LessonModel.video?.path);
+      removeLocalFileIfExists(lesson.video?.path);
 
-      LessonModel.video = {
+      lesson.video = {
         provider: "LOCAL",
         path: publicVideoPath,
         durationSeconds:
@@ -717,17 +739,23 @@ export async function updateLesson(
             ? toNumber(req.body.durationSeconds, 0)
             : req.body.durationMinutes !== undefined
               ? toNumber(req.body.durationMinutes, 0) * 60
-              : LessonModel.video?.durationSeconds,
+              : lesson.video?.durationSeconds,
       };
     }
 
-    await LessonModel.save();
+    await lesson.save();
 
     return res.json({
       message: "Lesson updated.",
       lesson: normalizeLesson(lesson),
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        message: "A lesson with the same order already exists in this course.",
+      });
+    }
+
     next(error);
   }
 }
@@ -748,16 +776,17 @@ export async function deleteLesson(
 
     if (!canManageCourse(req, course)) {
       return res.status(403).json({
-        message: "You do not have permission to delete this LessonModel.",
+        message: "You do not have permission to delete this lesson.",
       });
     }
 
-    removeLocalFileIfExists(LessonModel.video?.path);
+    removeLocalFileIfExists(lesson.video?.path);
 
-    await LessonModel.deleteOne({ _id: LessonModel._id });
+    await LessonModel.deleteOne({ _id: lesson._id });
 
     return res.json({
       message: "Lesson deleted.",
+      lessonId: String(lesson._id),
     });
   } catch (error) {
     next(error);
@@ -771,9 +800,9 @@ export async function listAdminCourses(
 ) {
   try {
     const courses = await CourseModel.find({})
-      .populate("instructor", "name email role")
-      .populate("approvedBy", "name email role")
-      .sort({ createdAt: -1 })
+      .populate("instructor", "name displayName email role")
+      .populate("approvedBy", "name displayName email role")
+      .sort({ createdAt: -1 });
 
     return res.json({
       courses: courses.map(normalizeCourse),
@@ -792,8 +821,8 @@ export async function listPendingCourses(
     const courses = await CourseModel.find({
       approvalStatus: COURSE_STATUS.PENDING_APPROVAL,
     })
-      .populate("instructor", "name email role")
-      .sort({ createdAt: -1 })
+      .populate("instructor", "name displayName email role")
+      .sort({ createdAt: -1 });
 
     return res.json({
       courses: courses.map(normalizeCourse),
@@ -831,11 +860,11 @@ export async function approveCourse(
         },
       },
       {
-        new: true,
+        returnDocument: "after",
       }
     )
-      .populate("instructor", "name email role")
-      .populate("approvedBy", "name email role");
+      .populate("instructor", "name displayName email role")
+      .populate("approvedBy", "name displayName email role");
 
     if (!updatedCourse) {
       return res.status(404).json({
@@ -887,11 +916,11 @@ export async function rejectCourse(
         },
       },
       {
-        new: true,
+        returnDocument: "after",
       }
     )
-      .populate("instructor", "name email role")
-      .populate("approvedBy", "name email role");
+      .populate("instructor", "name displayName email role")
+      .populate("approvedBy", "name displayName email role");
 
     if (!updatedCourse) {
       return res.status(404).json({
@@ -972,10 +1001,10 @@ export async function enrollInCourse(
         path: "course",
         populate: {
           path: "instructor",
-          select: "name email role",
+          select: "name displayName email role",
         },
       })
-      .populate("user", "name email role");
+      .populate("user", "name displayName email role");
 
     return res.status(201).json({
       message: "Enrolled successfully.",
@@ -986,6 +1015,53 @@ export async function enrollInCourse(
   }
 }
 
+export async function unenrollFromCourse(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (!isUser(req)) {
+      return res.status(403).json({
+        message: "Only USER accounts can unenroll from courses.",
+      });
+    }
+
+    const courseId = getParam(req, "courseId");
+
+    if (!mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json({
+        message: "Valid courseId is required.",
+      });
+    }
+
+    const course: any = await CourseModel.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({ message: "Course not found." });
+    }
+
+    const enrollment: any = await EnrollmentModel.findOne({
+      user: getCurrentUserId(req),
+      course: courseId,
+    });
+
+    if (!enrollment) {
+      return res.status(404).json({
+        message: "Enrollment not found.",
+      });
+    }
+
+    await EnrollmentModel.deleteOne({ _id: enrollment._id });
+
+    return res.json({
+      message: "Unenrolled successfully.",
+      courseId,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
 
 export async function listInstructorCourseEnrollments(
   req: Request,
@@ -1001,8 +1077,10 @@ export async function listInstructorCourseEnrollments(
       });
     }
 
-    const course: any = await CourseModel.findById(courseId)
-      .populate("instructor", "name email role");
+    const course: any = await CourseModel.findById(courseId).populate(
+      "instructor",
+      "name displayName email role"
+    );
 
     if (!course) {
       return res.status(404).json({
@@ -1020,8 +1098,7 @@ export async function listInstructorCourseEnrollments(
       course: courseId,
     })
       .populate("user", "name displayName email role isEmailVerified createdAt")
-      .sort({ enrolledAt: -1 })
-      .lean();
+      .sort({ enrolledAt: -1 });
 
     return res.json({
       course: normalizeCourse(course),
@@ -1045,11 +1122,10 @@ export async function listMyEnrollments(
         path: "course",
         populate: {
           path: "instructor",
-          select: "name email role",
+          select: "name displayName email role",
         },
       })
-      .sort({ enrolledAt: -1 })
-      .lean();
+      .sort({ enrolledAt: -1 });
 
     return res.json({
       enrollments: enrollments.map(normalizeEnrollment),

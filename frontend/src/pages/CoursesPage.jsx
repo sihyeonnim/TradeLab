@@ -13,6 +13,7 @@ export default function CoursesPage() {
     loading: true,
     error: "",
     message: "",
+    submittingId: "",
   });
 
   async function loadData() {
@@ -31,7 +32,7 @@ export default function CoursesPage() {
     async function init() {
       try {
         await loadData();
-        setStatus({ loading: false, error: "", message: "" });
+        setStatus({ loading: false, error: "", message: "", submittingId: "" });
       } catch (error) {
         if (error.response?.status === 401) {
           navigate("/login");
@@ -42,6 +43,7 @@ export default function CoursesPage() {
           loading: false,
           error: error.response?.data?.message || "Failed to load courses.",
           message: "",
+          submittingId: "",
         });
       }
     }
@@ -68,7 +70,12 @@ export default function CoursesPage() {
   }
 
   async function enroll(courseId) {
-    setStatus((prev) => ({ ...prev, error: "", message: "" }));
+    setStatus((prev) => ({
+      ...prev,
+      error: "",
+      message: "",
+      submittingId: courseId,
+    }));
 
     try {
       const response = await api.post(`/courses/${courseId}/enroll`);
@@ -77,13 +84,51 @@ export default function CoursesPage() {
       setStatus({
         loading: false,
         error: "",
-        message: response.data.message,
+        message: response.data.message || "Enrolled successfully.",
+        submittingId: "",
       });
     } catch (error) {
       setStatus({
         loading: false,
         error: error.response?.data?.message || "Enrollment failed.",
         message: "",
+        submittingId: "",
+      });
+    }
+  }
+
+  async function unenroll(courseId) {
+    const confirmed = window.confirm(
+      "Do you want to unenroll from this course? You can enroll again later if the course is still available."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setStatus((prev) => ({
+      ...prev,
+      error: "",
+      message: "",
+      submittingId: courseId,
+    }));
+
+    try {
+      const response = await api.delete(`/courses/${courseId}/enroll`);
+      await loadData();
+
+      setStatus({
+        loading: false,
+        error: "",
+        message: response.data.message || "Unenrolled successfully.",
+        submittingId: "",
+      });
+    } catch (error) {
+      setStatus({
+        loading: false,
+        error: error.response?.data?.message || "Unenrollment failed.",
+        message: "",
+        submittingId: "",
       });
     }
   }
@@ -121,42 +166,59 @@ export default function CoursesPage() {
             <p>No approved courses yet.</p>
           </article>
         ) : (
-          courses.map((course) => (
-            <article className="dashboard-card" key={course.id}>
-              <p className="eyebrow">{course.level || "COURSE"}</p>
-              <h3>{course.title}</h3>
-              <p>{course.description}</p>
+          courses.map((course) => {
+            const enrolled = isEnrolled(course.id);
+            const isSubmitting = status.submittingId === course.id;
 
-              {course.instructor?.name && (
-                <p className="muted-text">Instructor: {course.instructor.name}</p>
-              )}
+            return (
+              <article className="dashboard-card" key={course.id}>
+                <p className="eyebrow">{course.level || "COURSE"}</p>
+                <h3>{course.title}</h3>
+                <p>{course.description}</p>
 
-              <div className="tag-row">
-                {(course.tags || []).map((tag) => (
-                  <span className="tag" key={tag}>
-                    {tag}
-                  </span>
-                ))}
-              </div>
-
-              <div className="action-row">
-                <Link className="secondary-button link-button" to={`/courses/${course.id}`}>
-                  View Details
-                </Link>
-
-                {user?.role === "USER" ? (
-                  <button
-                    onClick={() => enroll(course.id)}
-                    disabled={isEnrolled(course.id)}
-                  >
-                    {isEnrolled(course.id) ? "Enrolled" : "Enroll"}
-                  </button>
-                ) : (
-                  <button disabled>Users only</button>
+                {course.instructor?.name && (
+                  <p className="muted-text">Instructor: {course.instructor.name}</p>
                 )}
-              </div>
-            </article>
-          ))
+
+                <div className="tag-row">
+                  {(course.tags || []).map((tag) => (
+                    <span className="tag" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="action-row">
+                  <Link className="secondary-button link-button" to={`/courses/${course.id}`}>
+                    View Details
+                  </Link>
+
+                  {user?.role === "USER" ? (
+                    enrolled ? (
+                      <button
+                        type="button"
+                        className="danger-button"
+                        onClick={() => unenroll(course.id)}
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? "Processing..." : "Unenroll"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => enroll(course.id)}
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? "Processing..." : "Enroll"}
+                      </button>
+                    )
+                  ) : (
+                    <button disabled>Users only</button>
+                  )}
+                </div>
+              </article>
+            );
+          })
         )}
       </section>
 

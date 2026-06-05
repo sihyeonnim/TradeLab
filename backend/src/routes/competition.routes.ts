@@ -7,6 +7,7 @@ import {
   getCompetitionLeaderboard,
   getCurrentCompetition,
   joinCompetition,
+  leaveCompetition,
   listAdminCompetitionParticipants,
   listAdminCompetitions,
   listCompetitions,
@@ -38,6 +39,7 @@ router.get(
 
 router.get("/:competitionId", requireAuth, getCompetitionDetail);
 router.post("/:competitionId/join", requireAuth, joinCompetition);
+router.delete("/:competitionId/join", requireAuth, leaveCompetition);
 router.get(
   "/:competitionId/leaderboard",
   requireAuth,
