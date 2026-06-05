@@ -391,3 +391,136 @@ export async function fetchAndStoreAllAssetPrices() {
 
   return results;
 }
+
+export async function fetchAlphaVantageGlobalQuote(symbol: string) {
+  const apiKey = getApiKey();
+
+  const url =
+    "https://www.alphavantage.co/query" +
+    "?function=GLOBAL_QUOTE" +
+    `&symbol=${encodeURIComponent(symbol)}` +
+    `&apikey=${encodeURIComponent(apiKey)}`;
+
+  const data = await requestJson(url);
+
+  assertAlphaVantageResponse(data);
+
+  const quote = data["Global Quote"];
+
+  if (!quote || !quote["05. price"]) {
+    throw new Error("Alpha Vantage did not return quote price data.");
+  }
+
+  return {
+    price: parseNumber(quote["05. price"]),
+    open: parseNumber(quote["02. open"]),
+    high: parseNumber(quote["03. high"]),
+    low: parseNumber(quote["04. low"]),
+    volume: parseNumber(quote["06. volume"]),
+    latestTradingDay: quote["07. latest trading day"] || null,
+  };
+}
+
+export async function fetchAndStoreCurrentQuotePrice(assetId: string) {
+  if (!mongoose.Types.ObjectId.isValid(assetId)) {
+    throw new Error("Valid assetId is required.");
+  }
+
+  const asset: any = await AssetModel.findById(assetId);
+
+  if (!asset) {
+    throw new Error("Asset not found.");
+  }
+
+  const symbol = String(asset.symbol || "").toUpperCase();
+
+  if (!symbol) {
+    throw new Error("Asset symbol is missing.");
+  }
+
+  const quote = await fetchAlphaVantageGlobalQuote(symbol);
+  const timestamp = new Date();
+  const close = quote.price;
+
+  if (close <= 0) {
+    throw new Error("Alpha Vantage returned an invalid quote price.");
+  }
+
+  const snapshot = await PriceSnapshotModel.findOneAndUpdate(
+    {
+      asset: asset._id,
+      timestamp,
+      source: "ALPHA_VANTAGE_GLOBAL_QUOTE",
+    },
+    {
+      $set: {
+        asset: asset._id,
+        symbol,
+        price: close,
+        open: quote.open || close,
+        high: quote.high || close,
+        low: quote.low || close,
+        close,
+        volume: quote.volume || 0,
+        source: "ALPHA_VANTAGE_GLOBAL_QUOTE",
+        timestamp,
+      },
+    },
+    {
+      upsert: true,
+      returnDocument: "after",
+      setDefaultsOnInsert: true,
+    }
+  );
+
+  if (typeof asset.set === "function") {
+    asset.set("lastFetchedPrice", close);
+    asset.set("lastPrice", close);
+    asset.set("lastFetchedAt", timestamp);
+  } else {
+    asset.lastFetchedPrice = close;
+    asset.lastPrice = close;
+    asset.lastFetchedAt = timestamp;
+  }
+
+  await asset.save();
+
+  return {
+    asset: normalizeAsset(asset),
+    snapshot,
+    storedCount: 1,
+    source: "ALPHA_VANTAGE_GLOBAL_QUOTE",
+  };
+}
+
+export async function fetchAndStoreAllCurrentQuotePrices() {
+  const assets: any[] = await AssetModel.find({
+    $or: [{ isActive: true }, { isActive: { $exists: false } }],
+  }).sort({ symbol: 1 });
+
+  const results = [];
+
+  for (const asset of assets) {
+    try {
+      const result = await fetchAndStoreCurrentQuotePrice(String(asset._id));
+
+      results.push({
+        assetId: String(asset._id),
+        symbol: asset.symbol,
+        success: true,
+        asset: result.asset,
+        storedCount: result.storedCount,
+        source: result.source,
+      });
+    } catch (error: any) {
+      results.push({
+        assetId: String(asset._id),
+        symbol: asset.symbol,
+        success: false,
+        message: error.message || "Failed to refresh asset quote.",
+      });
+    }
+  }
+
+  return results;
+}

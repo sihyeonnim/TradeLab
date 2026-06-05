@@ -35,6 +35,54 @@ function formatDate(value) {
   return formatDateTime(value);
 }
 
+function toDatetimeLocalValue(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function validateCompetitionForm(form) {
+  if (!form.title.trim()) {
+    return "Competition title is required.";
+  }
+
+  if (!form.description.trim()) {
+    return "Competition description is required.";
+  }
+
+  if (!form.startDate) {
+    return "Start date is required.";
+  }
+
+  if (!form.endDate) {
+    return "End date is required.";
+  }
+
+  const startsAt = new Date(form.startDate);
+  const endsAt = new Date(form.endDate);
+  const now = new Date();
+
+  if (Number.isNaN(startsAt.getTime())) {
+    return "Valid start date is required.";
+  }
+
+  if (Number.isNaN(endsAt.getTime())) {
+    return "Valid end date is required.";
+  }
+
+  if (endsAt <= startsAt) {
+    return "End date must be after start date.";
+  }
+
+  if (endsAt <= now) {
+    return "End date must be in the future.";
+  }
+
+  return "";
+}
+
 function formatParticipantPercent(entry) {
   if (entry?.scorePending || entry?.competitionStatus === "UPCOMING") {
     return "Pending";
@@ -82,6 +130,9 @@ export default function InstructorCompetitionsPage() {
     message: "",
     submitting: false,
   });
+
+
+  const minDateTime = useMemo(() => toDatetimeLocalValue(new Date()), []);
 
   const selectedCompetition = useMemo(() => {
     return (
@@ -207,6 +258,18 @@ export default function InstructorCompetitionsPage() {
   async function createCompetition(event) {
     event.preventDefault();
 
+    const validationMessage = validateCompetitionForm(form);
+
+    if (validationMessage) {
+      setStatus((prev) => ({
+        ...prev,
+        error: validationMessage,
+        message: "",
+        submitting: false,
+      }));
+      return;
+    }
+
     setStatus((prev) => ({
       ...prev,
       error: "",
@@ -234,6 +297,57 @@ export default function InstructorCompetitionsPage() {
         error:
           error.response?.data?.message ||
           "Failed to create competition.",
+        message: "",
+        submitting: false,
+      });
+    }
+  }
+
+  async function deleteCompetition(competitionId) {
+    const target = competitions.find(
+      (competition) => competition.id === competitionId
+    );
+
+    const title = target?.title || "this competition";
+
+    if (!window.confirm(`Delete ${title}? This will also remove participants.`)) {
+      return;
+    }
+
+    setStatus((prev) => ({
+      ...prev,
+      error: "",
+      message: "",
+      submitting: true,
+    }));
+
+    try {
+      const response = await api.delete(
+        `/competitions/instructor/${competitionId}`
+      );
+
+      const remaining = competitions.filter(
+        (competition) => competition.id !== competitionId
+      );
+      const nextSelectedId =
+        selectedCompetitionId === competitionId
+          ? remaining[0]?.id || ""
+          : selectedCompetitionId;
+
+      await loadData(nextSelectedId);
+
+      setStatus({
+        loading: false,
+        error: "",
+        message: response.data.message || "Competition deleted.",
+        submitting: false,
+      });
+    } catch (error) {
+      setStatus({
+        loading: false,
+        error:
+          error.response?.data?.message ||
+          "Failed to delete competition.",
         message: "",
         submitting: false,
       });
@@ -300,6 +414,7 @@ export default function InstructorCompetitionsPage() {
                   name="startDate"
                   type="datetime-local"
                   value={form.startDate}
+                  min={minDateTime}
                   onChange={updateForm}
                   required
                 />
@@ -311,6 +426,7 @@ export default function InstructorCompetitionsPage() {
                   name="endDate"
                   type="datetime-local"
                   value={form.endDate}
+                  min={form.startDate || minDateTime}
                   onChange={updateForm}
                   required
                 />
@@ -390,6 +506,15 @@ export default function InstructorCompetitionsPage() {
                             }
                           >
                             View participants
+                          </button>
+
+                          <button
+                            type="button"
+                            className="danger-button"
+                            onClick={() => deleteCompetition(competition.id)}
+                            disabled={status.submitting}
+                          >
+                            Delete
                           </button>
                         </td>
                       </tr>

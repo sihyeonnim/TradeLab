@@ -400,11 +400,10 @@ export default function MarketPage() {
 
     const intervalId = window.setInterval(async () => {
       try {
-        await api.post("/market/assets/tick");
         await loadMarketData(selectedChartAssetId);
         await loadPriceHistory(selectedChartAssetId, chartRange);
       } catch (error) {
-        console.warn("Live market tick failed:", error.response?.data || error);
+        console.warn("Live market polling failed:", error.response?.data || error);
       }
     }, 1000);
 
@@ -620,47 +619,6 @@ export default function MarketPage() {
     }
   }
 
-  async function refreshSelectedAssetFromApi() {
-    if (!selectedChartAssetId) {
-      return;
-    }
-
-    setStatus((prev) => ({
-      ...prev,
-      error: "",
-      message: "",
-      refreshing: true,
-    }));
-
-    try {
-      const response = await api.post(
-        `/market/assets/${selectedChartAssetId}/refresh`
-      );
-
-      await loadMarketData(selectedChartAssetId);
-      await loadPriceHistory(selectedChartAssetId, chartRange);
-
-      setStatus({
-        loading: false,
-        error: "",
-        message:
-          response.data.message ||
-          "Real price refreshed from Alpha Vantage.",
-        submitting: false,
-        refreshing: false,
-      });
-    } catch (error) {
-      setStatus({
-        loading: false,
-        error:
-          error.response?.data?.message ||
-          "Failed to refresh real price. The free API may be rate-limited.",
-        message: "",
-        submitting: false,
-        refreshing: false,
-      });
-    }
-  }
 
   if (status.loading) {
     return (
@@ -835,7 +793,7 @@ export default function MarketPage() {
 
           <div className="chart-actions">
             <button onClick={tickMarketNow} disabled={status.refreshing}>
-              {status.refreshing ? "Updating..." : "Update Market Now"}
+              {status.refreshing ? "Updating..." : "Update Local Price Now"}
             </button>
 
             <button onClick={simulateSelectedAsset} disabled={status.refreshing}>
@@ -850,13 +808,6 @@ export default function MarketPage() {
               Simulate All
             </button>
 
-            <button
-              className="secondary-button"
-              onClick={refreshSelectedAssetFromApi}
-              disabled={status.refreshing}
-            >
-              Refresh Real Price
-            </button>
           </div>
 
           <label className="live-market-toggle">
@@ -869,16 +820,16 @@ export default function MarketPage() {
           </label>
 
           <p className="muted-text">
-            Live simulation updates local prices every 10 seconds without using
-            the external API. Alpha Vantage remains available only as a limited
-            real-data baseline source.
+            Local prices are updated by the backend simulator. Real Alpha Vantage
+            refresh is automatic during the configured market window and is not
+            manually triggered by users.
           </p>
 
           {chartData.length === 0 ? (
             <div className="chart-placeholder">
               <strong>{selectedChartAsset?.symbol || "Asset"} chart</strong>
               <p>
-                No price history yet. Click Update Market Now or Simulate
+                No price history yet. Click Update Local Price Now or Simulate
                 Selected to generate local market data.
               </p>
             </div>

@@ -983,3 +983,58 @@ export async function listInstructorCompetitionParticipants(
     next(error);
   }
 }
+
+export async function deleteInstructorCompetition(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const user = getCurrentUser(req);
+    const competitionId = getParamAsString(req.params.competitionId);
+
+    if (!["INSTRUCTOR", "ADMIN"].includes(user.role)) {
+      return res.status(403).json({
+        message: "Only INSTRUCTOR or ADMIN can delete competitions.",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(competitionId)) {
+      return res.status(400).json({
+        message: "Valid competitionId is required.",
+      });
+    }
+
+    const competition: any = await Competition.findById(competitionId);
+
+    if (!competition) {
+      return res.status(404).json({
+        message: "Competition not found.",
+      });
+    }
+
+    const createdById = String(competition.createdBy || "");
+
+    if (user.role === "INSTRUCTOR" && createdById !== String(user._id)) {
+      return res.status(403).json({
+        message: "You can delete only competitions you created.",
+      });
+    }
+
+    if (competition.isDefault && user.role !== "ADMIN") {
+      return res.status(403).json({
+        message: "Default platform competitions can be deleted only by ADMIN.",
+      });
+    }
+
+    await CompetitionParticipant.deleteMany({ competition: competition._id });
+    await Competition.deleteOne({ _id: competition._id });
+
+    return res.json({
+      message: "Competition deleted successfully.",
+      competitionId,
+    });
+  } catch (error) {
+    next(error);
+  }
+}

@@ -215,6 +215,33 @@ function getCourseTitle(enrollment) {
   return "Course";
 }
 
+
+function isEnrollmentCourseVisible(enrollment) {
+  const course = enrollment?.course;
+
+  if (!course || typeof course !== "object") {
+    return false;
+  }
+
+  const approvalStatus = String(
+    course.approvalStatus || course.status || ""
+  ).toUpperCase();
+
+  if (approvalStatus && approvalStatus !== "APPROVED") {
+    return false;
+  }
+
+  if (typeof course.isPublished === "boolean" && !course.isPublished) {
+    return false;
+  }
+
+  if (course.rejectionReason) {
+    return false;
+  }
+
+  return true;
+}
+
 function getCompetitionTitle(item) {
   if (!item) {
     return "Competition";
@@ -381,12 +408,16 @@ export default function DashboardPage() {
           }
         : null;
 
+      const visibleEnrollments = (
+        enrollmentsResponse.data.enrollments || []
+      ).filter(isEnrollmentCourseVisible);
+
       setData({
         user: meResponse.data.user,
         portfolio,
         assets: assetsResponse.data.assets || [],
         orders: ordersResponse.data.orders || [],
-        enrollments: enrollmentsResponse.data.enrollments || [],
+        enrollments: visibleEnrollments,
         joinedCompetitions: joinedCompetitionsResponse.data.competitions || [],
         currentCompetition: currentCompetitionResponse.data.competition || null,
       });

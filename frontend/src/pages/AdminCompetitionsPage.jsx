@@ -193,6 +193,7 @@ export default function AdminCompetitionsPage() {
           <h1>Competitions</h1>
           <p className="dashboard-subtitle">
             Review competitions, creators, participants, and leaderboard status.
+            Status refreshes every second based on start and end time.
           </p>
         </div>
 

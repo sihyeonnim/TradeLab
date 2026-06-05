@@ -30,6 +30,18 @@ function statusClass(status) {
   return "";
 }
 
+function getCourseStatus(course) {
+  return String(course?.approvalStatus || "").toUpperCase();
+}
+
+function canApproveCourse(course) {
+  return getCourseStatus(course) !== "APPROVED";
+}
+
+function canRejectCourse(course) {
+  return getCourseStatus(course) !== "REJECTED";
+}
+
 export default function AdminCoursesPage() {
   const navigate = useNavigate();
 
@@ -315,21 +327,26 @@ export default function AdminCoursesPage() {
                           >
                             View users
                           </button>
-                          <button
-                            type="button"
-                            disabled={status.submitting}
-                            onClick={() => approveCourse(course.id)}
-                          >
-                            Approve
-                          </button>
-                          <button
-                            type="button"
-                            className="danger-button"
-                            disabled={status.submitting}
-                            onClick={() => rejectCourse(course.id)}
-                          >
-                            Reject
-                          </button>
+                          {canApproveCourse(course) && (
+                            <button
+                              type="button"
+                              disabled={status.submitting}
+                              onClick={() => approveCourse(course.id)}
+                            >
+                              Approve
+                            </button>
+                          )}
+
+                          {canRejectCourse(course) && (
+                            <button
+                              type="button"
+                              className="danger-button"
+                              disabled={status.submitting}
+                              onClick={() => rejectCourse(course.id)}
+                            >
+                              Reject
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

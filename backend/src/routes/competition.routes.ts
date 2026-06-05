@@ -3,6 +3,7 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth.middleware";
 import {
   createInstructorCompetition,
+  deleteInstructorCompetition,
   getCompetitionDetail,
   getCompetitionLeaderboard,
   getCurrentCompetition,
@@ -28,6 +29,11 @@ router.get(
   "/instructor/:competitionId/participants",
   requireAuth,
   listInstructorCompetitionParticipants
+);
+router.delete(
+  "/instructor/:competitionId",
+  requireAuth,
+  deleteInstructorCompetition
 );
 
 router.get("/admin/all", requireAuth, listAdminCompetitions);

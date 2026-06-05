@@ -210,6 +210,41 @@ function normalizeCourse(course: any) {
   };
 }
 
+
+function isCourseVisibleToLearner(course: any) {
+  const plain = asPlainDoc(course);
+
+  if (!plain) {
+    return false;
+  }
+
+  const approvalStatus = String(
+    plain.approvalStatus ?? plain.status ?? ""
+  ).toUpperCase();
+
+  if (approvalStatus && approvalStatus !== "APPROVED") {
+    return false;
+  }
+
+  if (typeof plain.isPublished === "boolean" && !plain.isPublished) {
+    return false;
+  }
+
+  if (typeof plain.isApproved === "boolean" && !plain.isApproved) {
+    return false;
+  }
+
+  if (typeof plain.approved === "boolean" && !plain.approved) {
+    return false;
+  }
+
+  if (plain.rejectionReason) {
+    return false;
+  }
+
+  return true;
+}
+
 function normalizeLesson(lesson: any) {
   const plain = asPlainDoc(lesson);
 
@@ -1127,8 +1162,12 @@ export async function listMyEnrollments(
       })
       .sort({ enrolledAt: -1 });
 
+    const visibleEnrollments = enrollments.filter((enrollment: any) =>
+      isCourseVisibleToLearner(enrollment.course)
+    );
+
     return res.json({
-      enrollments: enrollments.map(normalizeEnrollment),
+      enrollments: visibleEnrollments.map(normalizeEnrollment),
     });
   } catch (error) {
     next(error);

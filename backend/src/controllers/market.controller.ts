@@ -4,8 +4,8 @@ import mongoose from "mongoose";
 import * as AssetModule from "../models/Asset";
 import PriceSnapshotModel from "../models/PriceSnapshot";
 import {
-  fetchAndStoreAllAssetPrices,
-  fetchAndStoreLatestPrice,
+  fetchAndStoreAllCurrentQuotePrices,
+  fetchAndStoreCurrentQuotePrice,
 } from "../services/marketData.service";
 import {
   simulateAllAssetPrices,
@@ -177,6 +177,21 @@ export async function listAssetPrices(
   }
 }
 
+
+function requireAdminForRealRefresh(req: Request, res: Response) {
+  const user = (req as any).user;
+
+  if (!user || user.role !== "ADMIN") {
+    res.status(403).json({
+      message:
+        "Manual Alpha Vantage refresh is restricted to ADMIN accounts. Real prices refresh automatically on the backend schedule.",
+    });
+    return false;
+  }
+
+  return true;
+}
+
 export async function refreshOneAssetPrice(
   req: Request,
   res: Response,
@@ -191,10 +206,14 @@ export async function refreshOneAssetPrice(
       });
     }
 
-    const result = await fetchAndStoreLatestPrice(assetId);
+    if (!requireAdminForRealRefresh(req, res)) {
+      return;
+    }
+
+    const result = await fetchAndStoreCurrentQuotePrice(assetId);
 
     return res.json({
-      message: "Real asset price refreshed from Alpha Vantage.",
+      message: "Real asset quote refreshed from Alpha Vantage.",
       asset: result.asset,
       snapshot: normalizeSnapshot(result.snapshot),
     });
@@ -211,13 +230,17 @@ export async function refreshAllAssetPrices(
   next: NextFunction
 ) {
   try {
-    const results = await fetchAndStoreAllAssetPrices();
+    if (!requireAdminForRealRefresh(req, res)) {
+      return;
+    }
+
+    const results = await fetchAndStoreAllCurrentQuotePrices();
 
     const successCount = results.filter((result) => result.success).length;
     const failedCount = results.length - successCount;
 
     return res.json({
-      message: `Real price refresh completed. Success: ${successCount}, Failed: ${failedCount}.`,
+      message: `Real quote refresh completed. Success: ${successCount}, Failed: ${failedCount}.`,
       results,
     });
   } catch (error: any) {
