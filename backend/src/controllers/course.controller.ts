@@ -303,7 +303,9 @@ function normalizeEnrollment(enrollment: any) {
           : null,
     status: plain.status,
     progressPercent: plain.progressPercent,
-    completedLessons: plain.completedLessons || [],
+    completedLessons: (plain.completedLessons || []).map((lessonId: any) =>
+      String(lessonId?._id || lessonId?.id || lessonId)
+    ),
     enrolledAt: plain.enrolledAt,
     completedAt: plain.completedAt ?? null,
     createdAt: plain.createdAt,
@@ -724,6 +726,113 @@ export async function listCourseLessons(
     next(error);
   }
 }
+
+
+export async function markLessonCompleted(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (!isUser(req)) {
+      return res.status(403).json({
+        message: "Only USER accounts can complete lessons.",
+      });
+    }
+
+    const courseId = getParam(req, "courseId");
+    const lessonId = getParam(req, "lessonId");
+
+    if (
+      !mongoose.Types.ObjectId.isValid(courseId) ||
+      !mongoose.Types.ObjectId.isValid(lessonId)
+    ) {
+      return res.status(400).json({
+        message: "Valid courseId and lessonId are required.",
+      });
+    }
+
+    const course: any = await CourseModel.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({ message: "Course not found." });
+    }
+
+    if (!isApprovedCourse(course)) {
+      return res.status(403).json({
+        message: "Only approved and published courses can be completed.",
+      });
+    }
+
+    const lesson: any = await LessonModel.findOne({
+      _id: lessonId,
+      course: courseId,
+    });
+
+    if (!lesson) {
+      return res.status(404).json({
+        message: "Lesson not found in this course.",
+      });
+    }
+
+    const enrollment: any = await EnrollmentModel.findOne({
+      user: getCurrentUserId(req),
+      course: courseId,
+    });
+
+    if (!enrollment) {
+      return res.status(403).json({
+        message: "You must enroll in this course before completing lessons.",
+      });
+    }
+
+    const completedLessonIds = new Set(
+      (enrollment.completedLessons || []).map((id: any) =>
+        String(id?._id || id?.id || id)
+      )
+    );
+
+    completedLessonIds.add(String(lessonId));
+
+    const totalLessons = await LessonModel.countDocuments({ course: courseId });
+    const completedCount = completedLessonIds.size;
+
+    enrollment.completedLessons = Array.from(completedLessonIds);
+    enrollment.progressPercent =
+      totalLessons > 0
+        ? Math.min(100, Math.round((completedCount / totalLessons) * 100))
+        : 0;
+
+    if (totalLessons > 0 && completedCount >= totalLessons) {
+      enrollment.status = ENROLLMENT_STATUS.COMPLETED;
+      enrollment.completedAt = enrollment.completedAt || new Date();
+      enrollment.progressPercent = 100;
+    } else {
+      enrollment.status = ENROLLMENT_STATUS.ACTIVE;
+      enrollment.completedAt = undefined;
+    }
+
+    await enrollment.save();
+
+    const populated: any = await EnrollmentModel.findById(enrollment._id)
+      .populate({
+        path: "course",
+        populate: {
+          path: "instructor",
+          select: "name displayName email role",
+        },
+      })
+      .populate("user", "name displayName email role");
+
+    return res.json({
+      message: "Lesson marked as completed.",
+      enrollment: normalizeEnrollment(populated || enrollment),
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 
 export async function updateLesson(
   req: Request,

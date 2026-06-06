@@ -75,6 +75,52 @@ export default function CourseDetailPage() {
     );
   }, [courseId, enrollments]);
 
+  const currentEnrollment = useMemo(() => {
+    return (
+      enrollments.find(
+        (enrollment) => String(getEnrollmentCourseId(enrollment)) === String(courseId)
+      ) || null
+    );
+  }, [courseId, enrollments]);
+
+  const completedLessonIds = useMemo(() => {
+    return new Set(
+      (currentEnrollment?.completedLessons || []).map((lessonId) => String(lessonId))
+    );
+  }, [currentEnrollment]);
+
+  const progressPercent = Number(currentEnrollment?.progressPercent || 0);
+
+  function isLessonCompleted(lessonId) {
+    return completedLessonIds.has(String(lessonId));
+  }
+
+  async function markLessonCompleted(lessonId) {
+    setStatus((prev) => ({ ...prev, error: "", message: "", submitting: true }));
+
+    try {
+      const response = await api.post(
+        `/courses/${courseId}/lessons/${lessonId}/complete`
+      );
+      await loadData();
+
+      setStatus({
+        loading: false,
+        error: "",
+        message: response.data.message || "Lesson completed.",
+        submitting: false,
+      });
+    } catch (error) {
+      setStatus({
+        loading: false,
+        error:
+          error.response?.data?.message || "Failed to mark lesson as completed.",
+        message: "",
+        submitting: false,
+      });
+    }
+  }
+
   async function enroll() {
     setStatus((prev) => ({ ...prev, error: "", message: "", submitting: true }));
 
@@ -174,6 +220,24 @@ export default function CourseDetailPage() {
           </p>
           <p className="muted-text">Level: {course?.level || "-"}</p>
 
+          {enrolled && (
+            <div className="course-progress-box">
+              <div className="course-progress-header">
+                <span>Progress</span>
+                <strong>{progressPercent}%</strong>
+              </div>
+              <div className="course-progress-track">
+                <div
+                  className="course-progress-fill"
+                  style={{ width: `${Math.min(100, progressPercent)}%` }}
+                />
+              </div>
+              <p className="muted-text">
+                Completed {completedLessonIds.size} of {lessons.length} lessons.
+              </p>
+            </div>
+          )}
+
           <div className="tag-row">
             {(course?.tags || []).map((tag) => (
               <span className="tag" key={tag}>
@@ -230,11 +294,37 @@ export default function CourseDetailPage() {
                       <p className="muted-text">{lesson.contentMarkdown}</p>
                     </div>
 
-                    {videoSrc ? (
-                      <video className="lesson-video" controls src={videoSrc} />
+                    {enrolled ? (
+                      <>
+                        {videoSrc ? (
+                          <video className="lesson-video" controls src={videoSrc} />
+                        ) : (
+                          <div className="video-placeholder">
+                            No uploaded video for this lesson.
+                          </div>
+                        )}
+
+                        <div className="action-row">
+                          {isLessonCompleted(lesson.id) ? (
+                            <button type="button" className="secondary-button" disabled>
+                              Completed
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => markLessonCompleted(lesson.id)}
+                              disabled={status.submitting}
+                            >
+                              {status.submitting
+                                ? "Saving..."
+                                : "Mark as Completed"}
+                            </button>
+                          )}
+                        </div>
+                      </>
                     ) : (
                       <div className="video-placeholder">
-                        No uploaded video for this lesson.
+                        Enroll in this course to access the lesson content.
                       </div>
                     )}
                   </div>

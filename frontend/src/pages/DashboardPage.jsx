@@ -215,31 +215,16 @@ function getCourseTitle(enrollment) {
   return "Course";
 }
 
-
-function isEnrollmentCourseVisible(enrollment) {
-  const course = enrollment?.course;
-
-  if (!course || typeof course !== "object") {
-    return false;
+function getCourseId(enrollment) {
+  if (!enrollment?.course) {
+    return "";
   }
 
-  const approvalStatus = String(
-    course.approvalStatus || course.status || ""
-  ).toUpperCase();
-
-  if (approvalStatus && approvalStatus !== "APPROVED") {
-    return false;
+  if (typeof enrollment.course === "string") {
+    return enrollment.course;
   }
 
-  if (typeof course.isPublished === "boolean" && !course.isPublished) {
-    return false;
-  }
-
-  if (course.rejectionReason) {
-    return false;
-  }
-
-  return true;
+  return String(enrollment.course.id || enrollment.course._id || "");
 }
 
 function getCompetitionTitle(item) {
@@ -408,16 +393,12 @@ export default function DashboardPage() {
           }
         : null;
 
-      const visibleEnrollments = (
-        enrollmentsResponse.data.enrollments || []
-      ).filter(isEnrollmentCourseVisible);
-
       setData({
         user: meResponse.data.user,
         portfolio,
         assets: assetsResponse.data.assets || [],
         orders: ordersResponse.data.orders || [],
-        enrollments: visibleEnrollments,
+        enrollments: enrollmentsResponse.data.enrollments || [],
         joinedCompetitions: joinedCompetitionsResponse.data.competitions || [],
         currentCompetition: currentCompetitionResponse.data.competition || null,
       });
@@ -655,15 +636,34 @@ export default function DashboardPage() {
             <p>No enrolled courses yet.</p>
           ) : (
             <div className="compact-list">
-              {data.enrollments.slice(0, 4).map((enrollment) => (
-                <div className="compact-row" key={enrollment.id}>
-                  <div>
-                    <strong>{getCourseTitle(enrollment)}</strong>
-                    <span>{enrollment.status}</span>
+              {data.enrollments.slice(0, 4).map((enrollment) => {
+                const courseId = getCourseId(enrollment);
+                const progressPercent = Number(enrollment.progressPercent || 0);
+
+                return (
+                  <div className="compact-row" key={enrollment.id}>
+                    <div>
+                      {courseId ? (
+                        <Link to={`/courses/${courseId}`}>
+                          <strong>{getCourseTitle(enrollment)}</strong>
+                        </Link>
+                      ) : (
+                        <strong>{getCourseTitle(enrollment)}</strong>
+                      )}
+                      <span>{enrollment.status}</span>
+                      <div className="mini-progress-track">
+                        <div
+                          className="mini-progress-fill"
+                          style={{
+                            width: `${Math.min(100, progressPercent)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <em>{progressPercent}%</em>
                   </div>
-                  <em>{Number(enrollment.progressPercent || 0)}%</em>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

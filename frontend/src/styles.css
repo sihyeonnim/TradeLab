@@ -1158,3 +1158,52 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+.course-progress-box {
+  margin-top: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(2, 6, 23, 0.36);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.course-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.course-progress-header strong {
+  color: #86efac;
+}
+
+.course-progress-track,
+.mini-progress-track {
+  width: 100%;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.course-progress-track {
+  height: 12px;
+  border-radius: 999px;
+}
+
+.mini-progress-track {
+  height: 7px;
+  border-radius: 999px;
+  margin-top: 8px;
+  min-width: 160px;
+}
+
+.course-progress-fill,
+.mini-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #38bdf8, #22c55e);
+}

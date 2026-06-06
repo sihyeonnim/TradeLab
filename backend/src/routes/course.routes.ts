@@ -9,6 +9,7 @@ import {
   deleteInstructorCourse,
   createLesson,
   listCourseLessons,
+  markLessonCompleted,
   updateLesson,
   deleteLesson,
   listAdminCourses,
@@ -29,6 +30,12 @@ const router = express.Router();
 router.get("/courses", requireAuth, listApprovedCourses);
 router.get("/courses/:courseId", requireAuth, getCourseDetail);
 router.get("/courses/:courseId/lessons", requireAuth, listCourseLessons);
+router.post(
+  "/courses/:courseId/lessons/:lessonId/complete",
+  requireAuth,
+  requireRole("USER"),
+  markLessonCompleted
+);
 router.post("/courses/:courseId/enroll", requireAuth, requireRole("USER"), enrollInCourse);
 router.delete("/courses/:courseId/enroll", requireAuth, requireRole("USER"), unenrollFromCourse);
 router.get("/enrollments/me", requireAuth, listMyEnrollments);
